@@ -122,6 +122,8 @@ Common to all three contracts:
 
 Events: `BoxRegistered(boxId, deviceKey, label)`, `BoxActiveSet(boxId, active)`, `BoxBound(boxId, orderId)`, `BoxUnbound(boxId, orderId)`.
 
+Errors: `BoxExists(boxId)`, `BoxUnavailable(boxId)`.
+
 ### 5.2 `TamperSafeEscrow` (holds the funds)
 
 Roles: `DEFAULT_ADMIN_ROLE` (deployer) and `ORACLE_ROLE` (relayer). Inherits `ReentrancyGuard`.
@@ -156,6 +158,8 @@ Roles: `DEFAULT_ADMIN_ROLE` (deployer) and `ORACLE_ROLE` (relayer). Inherits `Re
 | `setBondBps(uint16 bps)` | `DEFAULT_ADMIN_ROLE` | — | Default 10 000 (bond = goods value) |
 | `getOrder(id)`, `bondBalance(addr)`, `lockedBond(addr)`, `orderCount()` | view | — | — |
 
+`bondBalance[courier]` is the courier's **free** (lockable/withdrawable) bond; `lockedBond[courier]` is the portion currently locked against a sealed shipment. `sealShipment` moves `bond` from free to locked; `confirmDelivery` moves it back to free; `reportTamper`/`claimTimeout` (if sealed) remove it from locked and pay it to the seller.
+
 Events:
 - `OrderCreated(id, buyer, seller, amount, deadline)`
 - `OrderCancelled(id)`
@@ -166,9 +170,10 @@ Events:
 - `Delivered(id, logHead, lat, lon, gpsFix)`
 - `TamperDetected(id, boxId, code, evidenceHash)`
 - `OrderExpired(id)`
-- `FundsReleased(id, to, amount, kind)`, where `kind` is one of `PAYMENT | REFUND | BOND_SLASH`
+- `FundsReleased(id, to, amount, kind)`, where `kind` is `ReleaseKind` (`uint8`: `0 PAYMENT · 1 REFUND · 2 BOND_SLASH`)
+- `BondBpsSet(bps)`, emitted by `setBondBps`
 
-Errors: `InvalidStatus(id, current)`, `NotBuyer()`, `BoxUnavailable(boxId)`, `InsufficientBond(courier, needed, free)`, `DeadlineNotReached()`, `BadDeadline()`, `ZeroAmount()`, `TransferFailed(to)`.
+Errors: `InvalidStatus(id, current)`, `NotBuyer()`, `InvalidSeller()` (createOrder: `seller == msg.sender`), `BoxUnavailable(boxId)`, `InsufficientBond(courier, needed, free)`, `DeadlineNotReached()`, `BadDeadline()`, `ZeroAmount()`, `TransferFailed(to)`.
 
 Rules:
 - Follow checks → effects → interactions.
@@ -186,6 +191,8 @@ Roles: `ORACLE_ROLE`.
 | `latest(uint256 orderId)` | view | `{seq, head, timestamp}` |
 
 Events: `Anchored(orderId, seq, head, count)`, `Alert(orderId, code, evidenceHash)`.
+
+Errors: `StaleSeq(orderId, seq, latestSeq)` — `anchor` reverts when `seq` does not strictly increase over the order's previously stored seq (0 before the first anchor, so the first call needs `seq ≥ 1`).
 
 ---
 
@@ -292,6 +299,8 @@ canon  = "v1|" + box_id|seq|ts|type|state|order_id|lat_e6|lon_e6|fix|dist_mm|lid
 head_n = lowercase_hex( SHA-256( head_{n-1} + "|" + canon_n ) )
 mac    = lowercase_hex( HMAC-SHA256( box_secret, box_id + "|" + last_seq + "|" + last_head ) )
 ```
+
+`box_secret` is the **32 raw bytes** decoded from the hex secret (not the 64-character ASCII hex string itself). Firmware decodes `secrets.h`'s hex string to bytes before calling mbedtls HMAC; the relayer decodes `BOX_SECRETS`' hex value the same way with `Buffer.from(hex, "hex")` before calling Node's `crypto.createHmac`. Both sides must agree on this or every MAC mismatches.
 
 Field encodings:
 - `ts`: unix seconds from NTP, or `0` until synced.
