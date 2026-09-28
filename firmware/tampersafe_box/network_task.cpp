@@ -112,16 +112,33 @@ void networkNotifyPriority() {
 
 // ---- Wi-Fi / NTP maintenance (non-blocking) --------------------------------
 static unsigned long lastWifiAttemptMs = 0;
+static bool wifiBeginIssued = false;
 static bool ntpConfigured = false;
 
+// Connecting to a phone hotspot (incl. DHCP) can take well over 5s. Calling
+// WiFi.begin() again while an attempt is still in flight can abort it, so
+// this only (re)issues begin() once, then leaves WiFi's own auto-reconnect
+// to do its job, and only forces a fresh begin() if that attempt visibly
+// failed (WL_CONNECT_FAILED / WL_NO_SSID_AVAIL) or ~20s have passed with no
+// result at all (stuck).
 static void maintainWifi() {
-  if (WiFi.status() == WL_CONNECTED) return;
+  wl_status_t status = WiFi.status();
+  if (status == WL_CONNECTED) {
+    wifiBeginIssued = false;
+    return;
+  }
+
   unsigned long now = millis();
-  if (now - lastWifiAttemptMs < 5000) return; // don't hammer WiFi.begin()
+  bool shouldRetry = !wifiBeginIssued || status == WL_CONNECT_FAILED || status == WL_NO_SSID_AVAIL ||
+                      (now - lastWifiAttemptMs >= 20000);
+  if (!shouldRetry) return;
+
   lastWifiAttemptMs = now;
   ntpConfigured = false; // re-arm NTP once we reconnect
   WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  wifiBeginIssued = true;
 }
 
 static void maintainNtp() {
@@ -133,8 +150,12 @@ static void maintainNtp() {
   if (g_ntpEpochAtSync == 0) {
     time_t now = time(nullptr);
     if (now > 1700000000) { // sane-looking epoch => sync landed
-      g_ntpEpochAtSync = (uint32_t)now;
+      // Write the millis() anchor BEFORE the epoch itself: networkCurrentUnixTime()
+      // (called from core 1) checks g_ntpEpochAtSync!=0 as its "is it synced"
+      // test, so writing the epoch second means a reader can never observe a
+      // non-zero epoch paired with a stale/zero millis anchor.
       g_ntpSyncMillis = millis();
+      g_ntpEpochAtSync = (uint32_t)now;
     }
   }
 }
@@ -143,7 +164,12 @@ static void maintainNtp() {
 static void runPostCycle() {
   if (WiFi.status() != WL_CONNECTED) return; // retry next cycle; never crash
 
-  RingEvent batch[BATCH_MAX];
+  // static, not a local: BATCH_MAX * sizeof(RingEvent) is too big to put on
+  // this task's stack on top of HTTPClient/lwIP/ArduinoJson's own usage --
+  // that combination can overflow the stack and reboot the box, which reads
+  // as a false POWER_INTERRUPTED if it happens while SEALED. Safe as static
+  // because runPostCycle() only ever runs on this one task, never re-entered.
+  static RingEvent batch[BATCH_MAX];
   int n = copyBatch(batch, BATCH_MAX);
   if (n == 0) return; // nothing to send this cycle
 
@@ -184,8 +210,18 @@ static void runPostCycle() {
   if (!http.begin(RELAYER_EVENTS_URL)) return; // malformed URL (team hasn't filled secrets.h yet)
   http.addHeader("Content-Type", "application/json");
 
+  static bool loggedStackHighWaterMark = false;
+
   int status = http.POST(body);
   if (status == 200) {
+    if (!loggedStackHighWaterMark) {
+      // One-off, right after the first real POST (worst-case stack usage
+      // for this task, since it exercises HTTPClient + JSON together) --
+      // lets the team confirm there's real headroom on actual hardware.
+      Serial.printf("netTask stack high-water mark: %u words free\n",
+                    (unsigned)uxTaskGetStackHighWaterMark(nullptr));
+      loggedStackHighWaterMark = true;
+    }
     String resp = http.getString();
     JsonDocument respDoc;
     if (deserializeJson(respDoc, resp) == DeserializationError::Ok) {
@@ -225,6 +261,9 @@ void networkInit() {
   ringMutex = xSemaphoreCreateMutex();
   cmdMutex = xSemaphoreCreateMutex();
   // Core 0, per ARCHITECTURE §8 ("loop() on core 1 ... a FreeRTOS network
-  // task on core 0"). Stack sized generously for HTTPClient + TLS-free JSON.
-  xTaskCreatePinnedToCore(networkTaskFn, "netTask", 8192, nullptr, 1, &networkTaskHandle, 0);
+  // task on core 0"). 12KB, not 8KB: HTTPClient + lwIP + the ArduinoJson
+  // JsonDocument together need more headroom than 8KB leaves once `batch`
+  // stopped being stack-allocated -- check the "stack high-water mark" log
+  // line on real hardware and raise this further if it's ever low.
+  xTaskCreatePinnedToCore(networkTaskFn, "netTask", 12288, nullptr, 1, &networkTaskHandle, 0);
 }
