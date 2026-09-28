@@ -81,9 +81,23 @@ export function buildRouter(deps: RouteDeps): express.Router {
       anchored = undefined;
     }
     const anchoredSeq = anchored ? Number(anchored.seq) : 0;
-    const anchoredHead = anchored ? String(anchored.head) : undefined;
-    const atAnchoredSeq = events.find((e) => e.seq === anchoredSeq);
-    const computedHeadAtAnchoredSeq = atAnchoredSeq?.head;
+    // Our stored/computed heads are bare lowercase hex (protocol.ts's
+    // SHA-256 digest output); the on-chain bytes32 comes back from ethers
+    // as "0x"-prefixed. Normalize both before comparing, or `match` is
+    // always false regardless of whether the chain actually agrees.
+    const normalizeHex = (h: string) => h.toLowerCase().replace(/^0x/, "");
+    const anchoredHead = anchored ? normalizeHex(String(anchored.head)) : undefined;
+    // Look up the LAST occurrence of that seq, not the first -- seq numbers
+    // repeat across box re-provisioning epochs (§10), so the first match
+    // could be a stale earlier epoch's event at the same seq.
+    let atAnchoredSeq: (typeof events)[number] | undefined;
+    for (let i = events.length - 1; i >= 0; i--) {
+      if (events[i]!.seq === anchoredSeq) {
+        atAnchoredSeq = events[i];
+        break;
+      }
+    }
+    const computedHeadAtAnchoredSeq = atAnchoredSeq ? normalizeHex(atAnchoredSeq.head) : undefined;
     const match = anchoredSeq > 0 ? computedHeadAtAnchoredSeq !== undefined && computedHeadAtAnchoredSeq === anchoredHead : null;
 
     res.json({
@@ -125,6 +139,16 @@ export function buildRouter(deps: RouteDeps): express.Router {
     }
     if (!box.active || box.activeOrderId !== 0n) {
       res.status(409).json({ ok: false, error: `box ${boxLabel} is not free (active=${box.active}, activeOrderId=${box.activeOrderId})` });
+      return;
+    }
+    // The command queue holds exactly one slot per box. Silently
+    // overwriting it here would let a SEAL displace a still-pending RESET
+    // (or a leftover seal-abort UNLOCK), and "RESET supersedes any other
+    // pending command" (§10) would no longer hold -- the depot would need
+    // to retry blind. Refuse instead of overwriting.
+    const existingCmd = deps.commands.getForBox(boxLabel);
+    if (existingCmd) {
+      res.status(409).json({ ok: false, error: `box ${boxLabel} already has a pending ${existingCmd.type} command (${existingCmd.cmdId})` });
       return;
     }
     let bondBps: bigint;

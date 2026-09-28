@@ -65,6 +65,12 @@ function walkChain(boxId: string, events: WireEvent[], startPrevHead: string): W
 export interface VerifyDeps {
   secretHex: string;
   now?: () => number;
+  /** Looks up the head this relayer recorded for a given seq, from the
+   * box's committed history (data/<box_id>.jsonl). Only needed for the
+   * all-duplicate-batch MAC check below: a resend of an OLDER already-acked
+   * window (not just the single most-recently-committed event) MACs over
+   * the head AT THAT window's last seq, not the box's current lastHead. */
+  headAt?: (seq: number) => string | undefined;
 }
 
 /**
@@ -129,8 +135,23 @@ export function verifyBatch(state: BoxIngestState, rawBatch: unknown, deps: Veri
   let gap = false;
 
   if (newEvents.length === 0) {
-    // Entire batch is a resend of history we've already committed.
-    finalRecomputedHead = candidateState.lastHead;
+    // Entire batch is a resend of history we've already committed. This
+    // might be a resend of the box's most recent window (lastSeqInBatch ===
+    // candidateState.lastSeq, in which case candidateState.lastHead IS the
+    // right value), OR a resend of an OLDER already-acked window (the box
+    // never saw our ack and retried a stale batch) -- in that case the MAC
+    // covers the head AT THAT window's last seq, which is only
+    // candidateState.lastHead by coincidence when the two seqs are equal.
+    const historicalHead = lastSeqInBatch === candidateState.lastSeq ? candidateState.lastHead : deps.headAt?.(lastSeqInBatch);
+    if (historicalHead === undefined) {
+      // We have no record of this seq at all (e.g. it predates this
+      // relayer's jsonl, or headAt wasn't supplied) -- fall back to the
+      // current head, which will correctly fail the MAC check below rather
+      // than silently mis-verifying.
+      finalRecomputedHead = candidateState.lastHead;
+    } else {
+      finalRecomputedHead = historicalHead;
+    }
   } else {
     const first = newEvents[0]!;
     if (first.seq === candidateState.lastSeq + 1) {

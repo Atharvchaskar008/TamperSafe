@@ -51,7 +51,18 @@ export class IngestPipeline {
       this.states.set(boxId, state);
     }
 
-    const outcome = verifyBatch(state, rawBatch, { secretHex });
+    const outcome = verifyBatch(state, rawBatch, {
+      secretHex,
+      headAt: (seq) => {
+        // Last occurrence wins -- seq numbers repeat across re-provisioning
+        // epochs (§10), and we want the CURRENT epoch's recorded head.
+        const all = this.store.readAll(boxId);
+        for (let i = all.length - 1; i >= 0; i--) {
+          if (all[i]!.seq === seq) return all[i]!.head;
+        }
+        return undefined;
+      },
+    });
     if (!outcome.ok) {
       return { status: outcome.status, body: outcome.body };
     }

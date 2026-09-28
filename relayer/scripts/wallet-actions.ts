@@ -26,12 +26,26 @@ export class WalletActions {
   private provider: ethers.JsonRpcProvider;
   private escrowAddress: string;
   private abi: ethers.InterfaceAbi;
+  /** Cumulative gas fees paid by each address through this class, so the
+   * checker can assert EXACT balance deltas (amount +/- fees), not just
+   * "roughly right" bounds. Keyed by lowercase address. */
+  private fees = new Map<string, bigint>();
 
   constructor(deps: WalletActionsDeps) {
     this.provider = new ethers.JsonRpcProvider(deps.rpcUrl, undefined, { pollingInterval: 300 });
     const deployment = JSON.parse(fs.readFileSync(deps.deploymentFile, "utf8"));
     this.escrowAddress = deployment.contracts.TamperSafeEscrow.address;
     this.abi = JSON.parse(fs.readFileSync(deps.abiFile, "utf8"));
+  }
+
+  private trackFee(address: string, fee: bigint): void {
+    const key = address.toLowerCase();
+    this.fees.set(key, (this.fees.get(key) ?? 0n) + fee);
+  }
+
+  /** Total gas fees this class has paid on behalf of `address` so far. */
+  feesPaidBy(address: string): bigint {
+    return this.fees.get(address.toLowerCase()) ?? 0n;
   }
 
   private async signerFor(index: number): Promise<ethers.Signer> {
@@ -60,6 +74,7 @@ export class WalletActions {
     deadlineUnix: number;
     valueWei: bigint;
   }): Promise<number> {
+    const buyerAddr = await this.addressOf(ACCOUNT_INDEX.buyer);
     const escrow = await this.escrowAs(ACCOUNT_INDEX.buyer);
     const tx = await (escrow.createOrder as (...a: unknown[]) => Promise<ethers.TransactionResponse>)(
       opts.sellerAddress,
@@ -70,6 +85,7 @@ export class WalletActions {
     );
     const receipt = await tx.wait();
     if (!receipt) throw new Error("createOrder: no receipt");
+    this.trackFee(buyerAddr, receipt.fee);
     const iface = new ethers.Interface(this.abi);
     for (const log of receipt.logs) {
       try {
@@ -83,27 +99,35 @@ export class WalletActions {
   }
 
   async cancelOrder(orderId: number): Promise<void> {
+    const buyerAddr = await this.addressOf(ACCOUNT_INDEX.buyer);
     const escrow = await this.escrowAs(ACCOUNT_INDEX.buyer);
     const tx = await (escrow.cancelOrder as (...a: unknown[]) => Promise<ethers.TransactionResponse>)(orderId);
-    await tx.wait();
+    const receipt = await tx.wait();
+    if (receipt) this.trackFee(buyerAddr, receipt.fee);
   }
 
   async requestUnlock(orderId: number): Promise<void> {
+    const buyerAddr = await this.addressOf(ACCOUNT_INDEX.buyer);
     const escrow = await this.escrowAs(ACCOUNT_INDEX.buyer);
     const tx = await (escrow.requestUnlock as (...a: unknown[]) => Promise<ethers.TransactionResponse>)(orderId);
-    await tx.wait();
+    const receipt = await tx.wait();
+    if (receipt) this.trackFee(buyerAddr, receipt.fee);
   }
 
   async depositBond(valueWei: bigint): Promise<void> {
+    const courierAddr = await this.addressOf(ACCOUNT_INDEX.courier);
     const escrow = await this.escrowAs(ACCOUNT_INDEX.courier);
     const tx = await (escrow.depositBond as (...a: unknown[]) => Promise<ethers.TransactionResponse>)({ value: valueWei });
-    await tx.wait();
+    const receipt = await tx.wait();
+    if (receipt) this.trackFee(courierAddr, receipt.fee);
   }
 
   async withdrawBond(amountWei: bigint): Promise<void> {
+    const courierAddr = await this.addressOf(ACCOUNT_INDEX.courier);
     const escrow = await this.escrowAs(ACCOUNT_INDEX.courier);
     const tx = await (escrow.withdrawBond as (...a: unknown[]) => Promise<ethers.TransactionResponse>)(amountWei);
-    await tx.wait();
+    const receipt = await tx.wait();
+    if (receipt) this.trackFee(courierAddr, receipt.fee);
   }
 
   async getBalance(address: string): Promise<bigint> {

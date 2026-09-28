@@ -19,7 +19,7 @@ import { fileURLToPath } from "node:url";
 import { ethers } from "ethers";
 import { WalletActions, ACCOUNT_INDEX, defaultDeps } from "./wallet-actions.js";
 import { SimBoxClient, runHappyScenario, runTamperScenario, runPowerCycleScenario, runOfflineGapScenario } from "./sim-box.js";
-import { waitForOrderStatus, snapshotBalances, assertHappyOutcome, assertTamperOutcome, STATUS } from "./checker.js";
+import { waitForOrderStatus, snapshotBalances, assertHappyOutcome, assertTamperOutcome, STATUS, TxFailureWatcher } from "./checker.js";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const RELAYER_DIR = path.resolve(SCRIPT_DIR, "..");
@@ -111,6 +111,7 @@ async function main(): Promise<void> {
   }
 
   let dataDir: string | undefined;
+  let txWatcher: TxFailureWatcher | undefined;
 
   try {
     const cli = hardhatCliPath();
@@ -147,6 +148,12 @@ async function main(): Promise<void> {
     await waitForStdout(relayer, "listening on", "relayer");
     await waitForHealth(RELAYER_URL);
 
+    // Balance deltas alone can't distinguish "a repeat TAMPER was a safe
+    // no-op" from "a repeat TAMPER was tried and permanently reverted" --
+    // both leave the chain untouched. Watch the relayer's own SSE tx stream
+    // for the ground truth instead.
+    txWatcher = new TxFailureWatcher(RELAYER_URL);
+
     const wallet = new WalletActions(defaultDeps(REPO_ROOT, "local"));
     const buyerAddr = await wallet.addressOf(ACCOUNT_INDEX.buyer);
     const sellerAddr = await wallet.addressOf(ACCOUNT_INDEX.seller);
@@ -155,7 +162,8 @@ async function main(): Promise<void> {
     const before = await snapshotBalances(wallet, { buyer: buyerAddr, seller: sellerAddr, courier: courierAddr });
 
     console.log("[orchestrator] courier deposits bond...");
-    await wallet.depositBond(ethers.parseEther("0.02"));
+    const depositWei = ethers.parseEther("0.02");
+    await wallet.depositBond(depositWei);
 
     console.log("[orchestrator] buyer creates order...");
     const amountWei = ethers.parseEther("0.01");
@@ -202,16 +210,51 @@ async function main(): Promise<void> {
     const after = await snapshotBalances(wallet, { buyer: buyerAddr, seller: sellerAddr, courier: courierAddr });
 
     if (wantStatus === STATUS.Delivered) {
-      await assertHappyOutcome({ wallet, orderId, amountWei, before, after, sellerAddr, courierAddr });
+      await assertHappyOutcome({ wallet, orderId, amountWei, depositWei, before, after, buyerAddr, sellerAddr, courierAddr });
     } else {
       const bondBps = await wallet.bondBps();
       const bondWei = (amountWei * bondBps) / 10_000n;
-      await assertTamperOutcome({ wallet, orderId, amountWei, bondWei, before, after });
+      await assertTamperOutcome({ wallet, orderId, amountWei, bondWei, depositWei, before, after, buyerAddr, courierAddr });
     }
 
-    console.log(`[orchestrator] PASS: scenario "${scenario}" reached status ${wantStatus} with correct balance deltas.`);
+    // Give the SSE stream a moment to catch up, then check the ground truth
+    // it carries that balances alone can't: no permanent tx failure was
+    // ever reported, and the expected chain calls actually landed exactly
+    // once each (not zero, not twice).
+    await new Promise((r) => setTimeout(r, 300));
+    await txWatcher.stop();
+    txWatcher.assertNoFailures();
+    if (scenario === "power-cycle") {
+      const count = txWatcher.countConfirmed("reportTamper");
+      if (count !== 1) {
+        throw new Error(`checker: expected exactly 1 confirmed reportTamper despite 2 TAMPER events (firmware re-emit quirk), got ${count}`);
+      }
+    }
+    if (scenario === "offline-gap") {
+      const count = txWatcher.countConfirmed("logAlert");
+      if (count < 1) {
+        throw new Error("checker: offline-gap scenario never confirmed a logAlert (LOG_GAP) transaction");
+      }
+    }
+
+    // The Evidence tab's "Verify log" button depends entirely on this route
+    // agreeing that the anchored head matches what we recompute -- assert
+    // it here too, not just balances, since a hex-encoding mismatch between
+    // our bare-hex storage and the chain's "0x"-prefixed bytes32 would
+    // otherwise pass every balance check while silently showing "mismatch"
+    // to every user forever.
+    const log = (await fetch(`${RELAYER_URL}/api/orders/${orderId}/log`).then((r) => r.json())) as {
+      anchored_seq: number;
+      match: boolean | null;
+    };
+    if (!(log.anchored_seq > 0 && log.match === true)) {
+      throw new Error(`checker: GET /api/orders/${orderId}/log did not verify (anchored_seq=${log.anchored_seq}, match=${log.match})`);
+    }
+
+    console.log(`[orchestrator] PASS: scenario "${scenario}" reached status ${wantStatus} with correct balance deltas and no permanent tx failures.`);
   } finally {
     console.log("[orchestrator] tearing down...");
+    if (txWatcher) await txWatcher.stop().catch(() => {});
     killTree(relayer);
     killTree(hardhatNode);
   }

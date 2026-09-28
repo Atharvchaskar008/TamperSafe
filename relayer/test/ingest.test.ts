@@ -67,6 +67,28 @@ test("duplicate resend of a fully-committed batch is dropped and acked, not re-v
   assert.equal(second.accepted.length, 0, "fully-duplicate batch appends nothing");
 });
 
+test("duplicate resend of an OLDER (not most-recent) window MACs against the head AT that window, not the current head", () => {
+  const first = verifyBatch(freshState(), vectorBatch(), { secretHex: SECRET });
+  assert.equal(first.ok, true);
+  if (!first.ok) return;
+  assert.equal(first.newState.lastSeq, 3, "sanity: box committed up through seq 3");
+
+  // The box resends its first window ([1, 2]) -- e.g. it never saw the
+  // relayer's ack for that batch and retried before also sending seq 3.
+  // Its MAC covers seq=2's head (vectors.events[1]), NOT the box's current
+  // lastHead (seq=3's head) -- a naive "always MAC against candidateState.
+  // lastHead" implementation would reject this as a MAC mismatch (401)
+  // even though it's a perfectly legitimate resend per §9.2 rule 3.
+  const batch = vectorBatch();
+  const resend = { ...batch, events: batch.events.slice(0, 2), mac: vectors.events[1].mac };
+  const headAt = (seq: number) => vectors.events.find((e: { seq: number; head: string }) => e.seq === seq)?.head;
+  const outcome = verifyBatch(first.newState, resend, { secretHex: SECRET, headAt });
+  assert.equal(outcome.ok, true);
+  if (!outcome.ok) return;
+  assert.equal(outcome.accepted.length, 0, "both events are duplicates of already-committed history");
+  assert.equal(outcome.newState.lastSeq, 3, "state must be unchanged by a pure duplicate resend");
+});
+
 test("a seq gap (ring buffer overrun) is accepted, rebased, and flagged", () => {
   const first = verifyBatch(freshState(), vectorBatch(), { secretHex: SECRET });
   assert.equal(first.ok, true);

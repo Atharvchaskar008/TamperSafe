@@ -1,6 +1,8 @@
-// Asserts final on-chain state + balance deltas for a scenario run. Failures
-// throw (the orchestrator's exit code follows), so "checked by the script,
-// not by eye" per the M3 done-criteria.
+// Asserts final on-chain state + EXACT balance deltas for a scenario run.
+// Failures throw (the orchestrator's exit code follows), so "checked by the
+// script, not by eye" per the M3 done-criteria. Deltas are exact (not
+// bounded/approximate) because WalletActions tracks the gas fee of every tx
+// it sends on each account's behalf (see wallet-actions.ts's `feesPaidBy`).
 import { ethers } from "ethers";
 import type { WalletActions } from "./wallet-actions.js";
 
@@ -38,14 +40,24 @@ export async function snapshotBalances(wallet: WalletActions, addrs: { buyer: st
   };
 }
 
-/** Happy path: seller gets the full order amount (it sent no txs, so its
- * delta is exact); the courier's bond unlocks back to free balance. */
+function assertExact(label: string, actual: bigint, expected: bigint): void {
+  if (actual !== expected) {
+    throw new Error(`checker: ${label}: expected ${expected}, got ${actual} (diff ${actual - expected})`);
+  }
+}
+
+/** Happy path / offline-gap: seller gets the full order amount (it sent no
+ * txs, so its delta is exact); the buyer already paid `amount` out at
+ * createOrder and never gets it back (seller does), so its total delta is
+ * exactly -(amount + its own gas); the courier's bond unlocks back to free. */
 export async function assertHappyOutcome(opts: {
   wallet: WalletActions;
   orderId: number;
   amountWei: bigint;
+  depositWei: bigint;
   before: Balances;
   after: Balances;
+  buyerAddr: string;
   sellerAddr: string;
   courierAddr: string;
 }): Promise<void> {
@@ -53,52 +65,122 @@ export async function assertHappyOutcome(opts: {
   if (Number(order.status) !== STATUS.Delivered) {
     throw new Error(`checker: expected Delivered (4), got status=${Number(order.status)}`);
   }
-  const sellerDelta = opts.after.seller - opts.before.seller;
-  if (sellerDelta !== opts.amountWei) {
-    throw new Error(`checker: seller delta ${sellerDelta} !== order amount ${opts.amountWei}`);
-  }
+
+  assertExact("seller delta", opts.after.seller - opts.before.seller, opts.amountWei);
+
+  const buyerFees = opts.wallet.feesPaidBy(opts.buyerAddr);
+  assertExact("buyer delta", opts.after.buyer - opts.before.buyer, -(opts.amountWei + buyerFees));
+
+  const courierFees = opts.wallet.feesPaidBy(opts.courierAddr);
+  assertExact("courier ETH delta", opts.after.courier - opts.before.courier, -(opts.depositWei + courierFees));
+
+  const freeBond = await opts.wallet.bondBalance(opts.courierAddr);
+  assertExact("courier free bond (bondBalance)", freeBond, opts.depositWei);
   const lockedBond = await opts.wallet.lockedBond(opts.courierAddr);
-  if (lockedBond !== 0n) {
-    throw new Error(`checker: courier's locked bond should be 0 after delivery, got ${lockedBond}`);
-  }
+  assertExact("courier locked bond", lockedBond, 0n);
 }
 
-/** Tamper: buyer is refunded the order amount, the courier's locked bond is
- * slashed to the seller (goods were compromised in the courier's custody). */
+/** Tamper / power-cycle: buyer is refunded the order amount it already paid
+ * in (net effect: -its own gas only), the courier's LOCKED bond is slashed
+ * to the seller (goods were compromised in the courier's custody) while its
+ * free bond stays exactly as reduced at seal time. */
 export async function assertTamperOutcome(opts: {
   wallet: WalletActions;
   orderId: number;
   amountWei: bigint;
   bondWei: bigint;
+  depositWei: bigint;
   before: Balances;
   after: Balances;
+  buyerAddr: string;
+  courierAddr: string;
 }): Promise<void> {
   const order = await opts.wallet.getOrder(opts.orderId);
   if (Number(order.status) !== STATUS.Tampered) {
     throw new Error(`checker: expected Tampered (5), got status=${Number(order.status)}`);
   }
-  const sellerDelta = opts.after.seller - opts.before.seller;
-  if (sellerDelta !== opts.bondWei) {
-    throw new Error(`checker: seller delta ${sellerDelta} !== slashed bond ${opts.bondWei}`);
-  }
-  // createOrder is payable: the buyer already paid amountWei OUT at order
-  // creation (that's what "before" is snapshotted ahead of). reportTamper's
-  // refund pays that same amountWei back IN, so the buyer's net delta across
-  // the whole scenario is just -gas (roughly zero, never positive, and never
-  // anywhere close to -amountWei -- which is what we'd see if the refund had
-  // silently failed to land).
-  const buyerDelta = opts.after.buyer - opts.before.buyer;
-  const maxPlausibleGas = opts.amountWei / 10n; // generous upper bound for 1-2 local txs
-  if (buyerDelta > 0n || -buyerDelta > maxPlausibleGas) {
-    throw new Error(
-      `checker: buyer delta ${buyerDelta} is not "paid amount then got it refunded, net of gas" ` +
-        `(expected roughly 0, bounded by -${maxPlausibleGas}) -- the refund may not have landed`,
-    );
-  }
+
+  assertExact("seller delta", opts.after.seller - opts.before.seller, opts.bondWei);
+
+  const buyerFees = opts.wallet.feesPaidBy(opts.buyerAddr);
+  assertExact("buyer delta", opts.after.buyer - opts.before.buyer, -buyerFees);
+
+  const courierFees = opts.wallet.feesPaidBy(opts.courierAddr);
+  assertExact("courier ETH delta", opts.after.courier - opts.before.courier, -(opts.depositWei + courierFees));
+
+  const freeBond = await opts.wallet.bondBalance(opts.courierAddr);
+  assertExact("courier free bond (bondBalance)", freeBond, opts.depositWei - opts.bondWei);
+  const lockedBond = await opts.wallet.lockedBond(opts.courierAddr);
+  assertExact("courier locked bond", lockedBond, 0n);
 }
 
 export function assertReceiptOk(receipt: ethers.TransactionReceipt | null, label: string): void {
   if (!receipt || receipt.status !== 1) {
     throw new Error(`checker: ${label} did not confirm successfully`);
+  }
+}
+
+/** Reads relayer SSE (`GET /api/stream`) from now until `stop()` is called,
+ * and records every `tx` event with stage:"failed", permanent:true. The
+ * balance-delta checks above can't tell "a repeat TAMPER was a safe no-op"
+ * apart from "a repeat TAMPER was tried and permanently reverted", because a
+ * failed estimateGas leaves no on-chain trace at all. This is that missing
+ * signal. */
+export class TxFailureWatcher {
+  public failures: Array<{ label: string; error: string }> = [];
+  public confirmed: Array<{ label: string; fn: string }> = [];
+  private controller = new AbortController();
+  private done: Promise<void>;
+
+  constructor(relayerUrl: string) {
+    this.done = this.run(relayerUrl);
+  }
+
+  private async run(relayerUrl: string): Promise<void> {
+    try {
+      const res = await fetch(`${relayerUrl}/api/stream`, { signal: this.controller.signal });
+      if (!res.body) return;
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) return;
+        buf += decoder.decode(value, { stream: true });
+        const events = buf.split("\n\n");
+        buf = events.pop() ?? "";
+        for (const chunk of events) {
+          const lines = chunk.split("\n");
+          const eventLine = lines.find((l) => l.startsWith("event: "));
+          const dataLine = lines.find((l) => l.startsWith("data: "));
+          if (!eventLine || !dataLine) continue;
+          if (eventLine.slice("event: ".length) !== "tx") continue;
+          const payload = JSON.parse(dataLine.slice("data: ".length));
+          if (payload.stage === "failed" && payload.permanent) {
+            this.failures.push({ label: payload.label, error: payload.error });
+          }
+          if (payload.stage === "confirmed") {
+            this.confirmed.push({ label: payload.label, fn: payload.fn });
+          }
+        }
+      }
+    } catch {
+      // aborted on stop(), or the relayer went away during teardown -- fine.
+    }
+  }
+
+  countConfirmed(fn: string): number {
+    return this.confirmed.filter((c) => c.fn === fn).length;
+  }
+
+  async stop(): Promise<void> {
+    this.controller.abort();
+    await this.done.catch(() => {});
+  }
+
+  assertNoFailures(): void {
+    if (this.failures.length > 0) {
+      throw new Error(`checker: relayer reported ${this.failures.length} permanent tx failure(s): ${JSON.stringify(this.failures)}`);
+    }
   }
 }
