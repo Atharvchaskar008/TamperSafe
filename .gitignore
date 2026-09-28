@@ -24,3 +24,9 @@ Thumbs.db
 # Logs
 *.log
 npm-debug.log*
+
+# Landing page build output & node_modules
+landing-page/node_modules/
+landing-page/dist/
+
+
