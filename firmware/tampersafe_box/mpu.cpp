@@ -54,10 +54,19 @@ bool mpuReadAccelTilt(int32_t *outAccelMg, int32_t *outTiltDeg) {
   float mag = sqrtf(axg * axg + ayg * ayg + azg * azg);
   *outAccelMg = (int32_t)lroundf(mag * 1000.0f);
 
-  // Tilt = angle between the measured accel vector and the +Z axis, which
-  // approximates device tilt from vertical when the box is roughly static
-  // (accel vector ~= gravity). Not valid during a genuine free-fall/shock
-  // transient, which is exactly when SHOCK (not TILT) should be firing.
+  // Tilt = angle between the measured accel vector and the board's own +Z
+  // axis, which approximates device tilt from vertical when the box is
+  // roughly static (accel vector ~= gravity). Not valid during a genuine
+  // free-fall/shock transient, which is exactly when SHOCK (not TILT)
+  // should be firing.
+  //
+  // TODO: calibrate in M2. This assumes the board's Z axis is vertical when
+  // the box sits normally -- true only if the board is mounted flat.
+  // HARDWARE.md §4 puts the board in a side compartment, which may mean the
+  // board sits on its side (Z roughly horizontal), in which case this would
+  // read ~90 deg at rest and misfire TILT once at boot. Capture a reference
+  // gravity vector at SEAL time and measure tilt relative to THAT vector,
+  // not a hardcoded axis, once the physical mounting is known.
   float magSafe = (mag < 0.01f) ? 0.01f : mag;
   float cosTilt = azg / magSafe;
   if (cosTilt > 1.0f) cosTilt = 1.0f;

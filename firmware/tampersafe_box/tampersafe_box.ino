@@ -79,6 +79,26 @@ static const char *tamperCodeName(uint8_t code) {
 
 static unsigned long tIr = 0, tUltra = 0, tMpu = 0, tSensors = 0, tOled = 0, tTelemetry = 0;
 
+// Last cmd_id we printed an "IGNORED command" line for, so a command the
+// relayer keeps resending (per §9.2, "the relayer re-sends an
+// unacknowledged command on every response") logs once, not once per
+// loop() tick.
+static char lastIgnoredCmdId[32] = "";
+
+// Set once at boot by runProtocolSelfTest(); surfaced on every reportStatus()
+// call (Serial + OLED), not just the one-shot boot print, so it can't be
+// missed by a Serial Monitor that attaches late.
+static bool g_selfTestOk = false;
+
+// Last time nr.updateSensors() actually succeeded. ctx.battValid alone only
+// says "at least once, ever" -- it never goes back to false, so on its own
+// it would let SEAL through on a value that's gone stale (e.g. the 12V pack
+// is off but USB is still powering the ESP32, so updateSensors() keeps
+// failing while nr.batteryVolts holds whatever it last read before that).
+// attemptSeal() additionally requires a successful read within the last 2s.
+static unsigned long lastBattOkMs = 0;
+#define BATTERY_FRESH_MS 2000
+
 // ---------------------------------------------------------------------------
 // Seal / unlock / reset -- the only places that move the servo or write NVS
 // `state`. Every one of them writes NVS BEFORE the corresponding event goes
@@ -110,7 +130,8 @@ static void attemptSeal(uint32_t orderId, const char *cmdId) {
   // ARMING must refuse to seal with the lid open (ARCHITECTURE §8:
   // "ARMING --> IDLE: lid open or battery low -> SEAL_FAILED") -- only the
   // battery half of that guard is real here.
-  bool batteryOk = ctx.battValid && (nr.batteryVolts >= BATTERY_MIN_VOLTS);
+  bool batteryFresh = ctx.battValid && (millis() - lastBattOkMs <= BATTERY_FRESH_MS);
+  bool batteryOk = batteryFresh && (nr.batteryVolts >= BATTERY_MIN_VOLTS);
 
   if (!batteryOk) {
     ctx.state = BoxState::IDLE;
@@ -223,10 +244,14 @@ static void handleBoot() {
 static void reportStatus() {
   bool wifiOk = (WiFi.status() == WL_CONNECTED);
 
-  Serial.printf("[state=%s] order=%lu seq=%lu batt=%s wifi=%s lock=%c\n",
+  // Self-test result folded into the recurring 2Hz line, not just the one
+  // boot-time print -- the CDC Serial Monitor often attaches after that
+  // first print has already scrolled past, so PASS/FAIL needs to stay
+  // visible on both Serial and the OLED for as long as the box is on.
+  Serial.printf("[state=%s] order=%lu seq=%lu batt=%s wifi=%s lock=%c selftest=%s\n",
                 boxStateName(ctx.state), (unsigned long)ctx.orderId, (unsigned long)ctx.seq,
                 ctx.battValid ? String(nr.batteryVolts, 2).c_str() : "?",
-                wifiOk ? "OK" : "--", ctx.lock);
+                wifiOk ? "OK" : "--", ctx.lock, g_selfTestOk ? "PASS" : "FAIL");
 
   display.clearDisplay();
   display.setTextSize(1);
@@ -241,8 +266,8 @@ static void reportStatus() {
     display.println(boxStateName(ctx.state));
   }
   display.setCursor(0, 20);
-  display.printf("B:%s W:%s L:%c", ctx.battValid ? String(nr.batteryVolts, 1).c_str() : "?",
-                 wifiOk ? "Y" : "N", ctx.lock);
+  display.printf("B:%s W:%s L:%c %s", ctx.battValid ? String(nr.batteryVolts, 1).c_str() : "?",
+                 wifiOk ? "Y" : "N", ctx.lock, g_selfTestOk ? "ST:OK" : "ST:FAIL");
   display.display();
 }
 
@@ -274,8 +299,7 @@ void setup() {
   uint32_t bootCount = nvsIncrementBootCount();
   Serial.printf("TamperSafe box booting, boot_count=%lu\n", (unsigned long)bootCount);
 
-  bool selfTestOk = runProtocolSelfTest();
-  (void)selfTestOk; // self-test only prints; boot continues either way so the team can see the mismatch on Serial
+  g_selfTestOk = runProtocolSelfTest(); // prints SELFTEST PASS/FAIL; boot continues either way so the team can still see a FAIL on Serial/OLED rather than the box going dark
 
   if (!mpuInit()) {
     Serial.println("WARNING: MPU6050 init failed (0x68 not answering?) -- SHOCK/TILT alerts disabled until it recovers");
@@ -296,10 +320,23 @@ void setup() {
   networkInit(); // starts the core-0 task; safe to start after NVS/state are loaded
 
   emitEvent("BOOT", 0, "");
-  if (ctx.state == BoxState::TAMPERED && ctx.tamperCode == 3) {
-    // Latch already happened inside handleBoot() before this BOOT event
-    // was emitted above, so this satisfies "latch before report" too.
-    emitEvent("TAMPER", 3, "");
+  if (ctx.state == BoxState::TAMPERED && ctx.orderId != 0) {
+    // Re-emit TAMPER with the latched code on EVERY boot that comes up
+    // TAMPERED against a real order -- not just the boot that first caused
+    // it (tamperCode==3/POWER_INTERRUPTED). Reasoning: the ring buffer that
+    // carries TAMPER to the relayer lives in RAM only. A tamper detected
+    // while offline (LID_OPENED, CONTENTS_DISTURBED, or a prior
+    // POWER_INTERRUPTED) that is then followed by ANOTHER reboot before the
+    // box ever reconnects would otherwise never reach the chain, which
+    // breaks CLAUDE.md invariant 3 ("Once a box reports tamper... both the
+    // firmware (NVS) and the contract keep it"). Latch already happened
+    // inside handleBoot() (or on a prior boot) before this BOOT event was
+    // emitted above, so this still satisfies "latch before report".
+    //
+    // Flag for the main session: the relayer must treat a TAMPER for an
+    // order that's already Tampered on-chain as a no-op (Escrow.reportTamper
+    // would revert InvalidStatus otherwise on this resend).
+    emitEvent("TAMPER", ctx.tamperCode, "");
   }
 
   reportStatus();
@@ -334,7 +371,12 @@ void loop() {
     if (mpuReadAccelTilt(&accelMg, &tiltDeg)) {
       ctx.accelMg = accelMg;
       ctx.tiltDeg = tiltDeg;
-      mpuEvaluateAlerts(accelMg, tiltDeg);
+      // Judgment call, not explicit in ARCHITECTURE §8 (which only says
+      // alerts never change state, not that they're SEALED-only): gate
+      // SHOCK/TILT to SEALED so carrying the empty box around in IDLE/
+      // ARMING/OPEN_AUTHORIZED doesn't spam Anchor.logAlert(order_id=0, ...)
+      // on the relayer. Flagged for the team to confirm.
+      if (ctx.state == BoxState::SEALED) mpuEvaluateAlerts(accelMg, tiltDeg);
     }
     // else: keep the stale ctx values, per "always check the return value"
   }
@@ -345,8 +387,11 @@ void loop() {
     if (nr.updateSensors()) {
       ctx.battMv = (int32_t)lroundf(nr.batteryVolts * 1000.0f);
       ctx.battValid = true;
+      lastBattOkMs = now;
     }
-    // else: stale nr.batteryVolts/ctx.battMv are kept, never acted on as fresh
+    // else: stale nr.batteryVolts/ctx.battMv are kept for display, but
+    // attemptSeal()'s freshness check (lastBattOkMs) stops them from
+    // gating a real SEAL once they're more than 2s old.
   }
 
   // --- OLED + Serial (2 Hz).
@@ -371,21 +416,35 @@ void loop() {
       if (strcmp(cmdType, "SEAL") == 0 && ctx.state == BoxState::IDLE) {
         attemptSeal(cmdOrderId, cmdId);
         handled = true;
-      } else if (strcmp(cmdType, "UNLOCK") == 0 && ctx.state == BoxState::SEALED) {
+      } else if (strcmp(cmdType, "UNLOCK") == 0 && ctx.state == BoxState::SEALED && cmdOrderId == ctx.orderId) {
         doUnlock(cmdId);
         handled = true;
       } else if (strcmp(cmdType, "RESET") == 0 &&
                  (ctx.state == BoxState::TAMPERED || ctx.state == BoxState::OPEN_AUTHORIZED)) {
         doReset(cmdId);
         handled = true;
+      } else if (strcmp(cmdType, "RESET") == 0 && ctx.state == BoxState::IDLE) {
+        // Idempotent: e.g. the box already reset itself (UNLOCK->IDLE via a
+        // prior RESET) but the relayer hasn't seen that RESET_DONE yet and
+        // keeps resending. Re-ack it rather than ignoring it forever --
+        // otherwise a depot's RESET can get stuck waiting on a box that's
+        // already in the state it asked for.
+        doReset(cmdId);
+        handled = true;
       } else {
         // Invalid for the current state (e.g. a resent SEAL after the box
-        // is already SEALED). Judgment call: don't ack it and don't mark
-        // it handled -- leave it pending so a legitimate state change
-        // (e.g. RESET landing first) lets it be re-evaluated later, rather
-        // than silently dropping a command the relayer thinks is still
-        // outstanding. Flagged for the team.
-        Serial.printf("IGNORED command %s (id=%s) invalid for state %s\n", cmdType, cmdId, boxStateName(ctx.state));
+        // is already SEALED, or an UNLOCK for a stale order_id). Judgment
+        // call: don't ack it and don't mark it handled -- leave it pending
+        // so a legitimate state change lets it be re-evaluated later,
+        // rather than silently dropping a command the relayer thinks is
+        // still outstanding. Flagged for the team. Logged only once per
+        // cmd_id (not every loop() tick) since the relayer keeps resending
+        // an unacked command on every response.
+        if (strcmp(cmdId, lastIgnoredCmdId) != 0) {
+          strlcpy(lastIgnoredCmdId, cmdId, sizeof(lastIgnoredCmdId));
+          Serial.printf("IGNORED command %s (id=%s, order=%lu) invalid for state %s\n",
+                        cmdType, cmdId, (unsigned long)cmdOrderId, boxStateName(ctx.state));
+        }
       }
       if (handled) {
         strlcpy(ctx.lastHandledCmdId, cmdId, sizeof(ctx.lastHandledCmdId));
