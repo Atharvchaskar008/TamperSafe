@@ -366,31 +366,58 @@ Relayer checks, in order:
 
 ## 10. Relayer internals
 
-Ingest pipeline: schema → MAC → chain verify → append `data/<box_id>.jsonl` → SSE → rules.
+Ingest pipeline: schema → MAC → **recompute every event's head from its own fields (never trust the batch's claimed `head` — the MAC only authenticates the last event in the batch, so a tampered middle field must be caught by the chain-verify step re-deriving the hash, not by trusting the string on the wire)** → append `data/<box_id>.jsonl` → SSE → rules.
 
-| Device event | Chain action |
-| :--- | :--- |
-| `SEALED` (answering a SEAL command) | `Escrow.sealShipment(order, boxId, courier, head)` |
-| `TAMPER` | `Escrow.reportTamper(order, code, head)`, at the front of the queue |
-| `ALERT` | `Anchor.logAlert(order, code, head)`, rate-limited per §7 |
-| `UNLOCKED` | `Escrow.confirmDelivery(order, head, lat_e6, lon_e6, fix)` |
-| every 30 s / 20 events while InTransit | `Anchor.anchor(order, seq, head, count)` |
+The rules below exist because firmware M4 re-emits TAMPER on every boot that comes up `TAMPERED` against a real order (not just the boot that first caused it), so the relayer must treat a repeat as a no-op rather than retrying a call the contract will revert. Every rule below checks the order's **current on-chain status** (`Escrow.getOrder(id).status`) before sending a transaction — never assumes the device event alone tells you what's still valid on-chain:
+
+| Device event | On-chain status | Relayer action |
+| :--- | :--- | :--- |
+| `SEALED` (answering a SEAL command) | Funded | `Escrow.sealShipment(order, boxId, courier, head)` |
+| `TAMPER` | InTransit or UnlockRequested | `Escrow.reportTamper(order, code, head)`, at the front of the queue |
+| `TAMPER` | Tampered (already reported) | No transaction. Ack the device so it stops resending |
+| `TAMPER` | Funded (box sealed locally, e.g. via a SEAL retry after a failed transaction, but the seal transaction never landed on-chain) | No transaction. Raise an SSE alert so a human notices the box thinks it's sealed and the chain doesn't; ack the device |
+| `ALERT` | any | `Anchor.logAlert(order, code, head)`, rate-limited per §7 |
+| `UNLOCKED` | UnlockRequested | `Escrow.confirmDelivery(order, head, lat_e6, lon_e6, fix)` |
+| `UNLOCKED` | Delivered (already confirmed) | No transaction. Ack the device |
+| `UNLOCKED` | Funded (a seal-abort — see below) | No transaction. Ack the device |
+| every 30 s / 20 events while InTransit | — | `Anchor.anchor(order, seq, head, count)` |
+
+**Seal abort:** if `sealShipment` fails permanently (a decoded revert, see below), the box is still physically SEALED and only accepts UNLOCK — there is no on-chain state to undo since the seal never landed. Queue UNLOCK for that box so the depot can physically recover it, rather than leaving it locked with nothing on-chain backing it.
+
+**Revert handling:**
+- A revert the relayer can decode as one of the contracts' custom errors (`InvalidStatus`, `BoxUnavailable`, `InsufficientBond`, ...) is permanent — the retry would fail identically. Never retry it; log it, surface it over SSE, and move on to the next queued action.
+- Only transport-layer failures (RPC timeout, connection reset), nonce errors, and fee-estimation failures get the 2 retries.
+
+**Command queue (relayer → box):**
+- When an order reaches a terminal status (Delivered / Tampered / Expired / Cancelled), cancel any command still queued for its box — a stale SEAL or UNLOCK must never fire against a box whose order has already resolved.
+- RESET supersedes any other pending command for that box. This matters because a box stuck TAMPERED ignores UNLOCK entirely (per firmware's command handling), so if UNLOCK is still sitting in the single command slot when RESET needs to go out, RESET can never get through — RESET must displace it.
+- The RESET pre-check reads `BoxRegistry.getBox(boxId).activeOrderId == 0`, **not** the box's own reported `order_id` — a box can tamper against an order that was Funded but never actually sealed on-chain (see the seal-abort case above), in which case the box's local `order_id` is nonzero but the registry was never bound. Checking the registry, not the box, is what lets that box be reset.
+
+**Box re-provisioning:** accept a batch that restarts at `seq == 1` with a hash chain that verifies from the genesis head and a valid MAC, treating it as the box having been re-flashed or flash-erased (the firmware setup notes recommend "Erase All Flash Before Sketch Upload" to clear a latched TAMPERED state on the bench). Re-base the relayer's last-seen `seq`/`head` for that box on the new chain and raise an SSE alert noting the reset. Without this, every event after a flash-erase gets silently dropped as a duplicate (`seq ≤ last seen`) and nothing — including a real SEALED — would ever reach the chain again, with no visible error.
 
 Background workers:
-- **Chain listener:** watches for `UnlockRequested(id, boxId)` and queues UNLOCK for that box. Polling interval 1 s.
+- **Chain listener:** watches for `UnlockRequested(id, boxId)` and queues UNLOCK for that box. Polling interval 1 s. **Reconciles at startup** by scanning `getOrder` across all known orders for any already sitting in UnlockRequested, not only new events after startup — a relayer restart must not lose a pending unlock.
 - **Watchdog:** raises `SIGNAL_LOST` once per outage when a box in SEALED sends nothing for 30 s.
 
 Chain writer:
+- A typed wrapper exposing exactly the five ORACLE-role functions (`sealShipment`, `reportTamper`, `confirmDelivery`, `anchor`, `logAlert`) — no other contract call is reachable through it, so Invariant 1 (the relayer never names a payee) holds by construction, not by convention.
 - One queue with one in-flight transaction.
 - Nonce from `getTransactionCount("pending")` at startup, then incremented locally.
 - Legacy transactions (`type: 0`, fixed `gasPrice`) when fee estimation fails.
-- 2 retries.
-- Every step is pushed to SSE with `https://testnet.mstscan.com/tx/<hash>`.
+- 2 retries (transport/nonce/fee errors only — see Revert handling above).
+- Every step is pushed to SSE. **Explorer links (`https://testnet.mstscan.com/tx/<hash>`) are only ever built when `CHAIN=mst`** — a local Hardhat transaction hash is not resolvable on `mstscan.com`, and the UI must never construct a link that leads nowhere.
+- **Persist pending commands to disk** (`cmd_id → { orderId, courierAddress, boxId }`) as they're queued, not just in memory — a relayer restart mid-seal must not lose track of which courier a pending SEAL was locking a bond for.
+- **Rebuild in-memory state at startup** from `data/<box_id>.jsonl` for every known box: last seen `seq` and `head`, so a restart doesn't re-derive trust from nothing.
+
+Signing (**local only** — this repo/agents never hold a testnet key):
+- `CHAIN=local`: the relayer signs with a Hardhat dev account via `provider.getSigner(deployments/local.json's relayerOracle.address)` — confirm first that `eth_accounts` on the local node actually returns that address as one of its unlocked dev accounts. No private key is read from anywhere for this path.
+- `CHAIN=mst`: reads `ORACLE_PRIVATE_KEY` from `.env` — never touched by any agent, team-only, M6.
+- At startup, `getCode()` on every address in the active `deployments/<chain>.json` must return more than `0x`, or the relayer refuses to start — a stale `local.json` (left over from a killed `hardhat node`) must fail loudly, not silently send transactions into empty addresses.
 
 Config lives in `relayer/.env` (gitignored; `.env.example` is committed):
 - `CHAIN=local|mst`
 - `MST_RPC`, `LOCAL_RPC`
-- `ORACLE_PRIVATE_KEY`
+- `ORACLE_PRIVATE_KEY` (mst only; unused/absent for local)
 - `BOX_SECRETS` (JSON `box_id → hex`)
 - `PORT`
 
