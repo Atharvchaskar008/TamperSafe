@@ -211,8 +211,13 @@ static void runPostCycle() {
   http.addHeader("Content-Type", "application/json");
 
   static bool loggedStackHighWaterMark = false;
+  static int lastLoggedStatus = -12345; // sentinel: never a real HTTPClient status
+  static uint32_t lastLoggedAckSeq = 0xFFFFFFFF; // sentinel: never a real ack_seq
 
   int status = http.POST(body);
+  uint32_t ackSeq = 0;
+  bool haveAckSeq = false;
+
   if (status == 200) {
     if (!loggedStackHighWaterMark) {
       // One-off, right after the first real POST (worst-case stack usage
@@ -229,7 +234,9 @@ static void runPostCycle() {
     JsonDocument respDoc;
     if (deserializeJson(respDoc, resp) == DeserializationError::Ok) {
       if (respDoc["ok"] == true && respDoc["ack_seq"].is<uint32_t>()) {
-        ackUpToSeq(respDoc["ack_seq"].as<uint32_t>());
+        ackSeq = respDoc["ack_seq"].as<uint32_t>();
+        haveAckSeq = true;
+        ackUpToSeq(ackSeq);
       }
       if (respDoc["command"].is<JsonObject>()) {
         JsonObject cmd = respDoc["command"];
@@ -246,6 +253,23 @@ static void runPostCycle() {
   // in the ring un-acked and retry next cycle. Never crash on a bad
   // response -- the ring buffer is exactly the "don't blind the box while
   // offline" mechanism from §8.
+
+  // Logged only when status or ack_seq changes, not every 2s cycle --
+  // otherwise a healthy box posting all day floods Serial with repeats of
+  // the same line. Without this, a wrong RELAYER_URL (http.begin() failure,
+  // handled above), a wrong box secret (401), or a broken chain (409) would
+  // show as nothing more than "wifi=OK" on the recurring status line, with
+  // no way to tell it apart from a perfectly healthy box.
+  if (status != lastLoggedStatus || (haveAckSeq && ackSeq != lastLoggedAckSeq)) {
+    if (haveAckSeq) {
+      Serial.printf("POST -> %d ack_seq=%lu\n", status, (unsigned long)ackSeq);
+      lastLoggedAckSeq = ackSeq;
+    } else {
+      Serial.printf("POST -> %d\n", status);
+    }
+    lastLoggedStatus = status;
+  }
+
   http.end();
 }
 
