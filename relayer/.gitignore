@@ -1,0 +1,3 @@
+# Local to relayer/, on top of the repo-root .gitignore.
+node_modules/
+dist/
