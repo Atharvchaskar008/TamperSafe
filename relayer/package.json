@@ -5,11 +5,20 @@
   "type": "module",
   "description": "TamperSafe relayer: device ingest, chain writer, listener, SSE, sim-box. Protocol module built first per docs/IMPLEMENTATION_PLAN.md M3.",
   "scripts": {
-    "test": "node --import tsx --test test/protocol.test.ts"
+    "test": "node --import tsx --test test/protocol.test.ts test/ingest.test.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
     "@types/node": "^22.10.2",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
+  },
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.4",
+    "ethers": "^6.17.0",
+    "express": "^5.2.1"
   }
 }
