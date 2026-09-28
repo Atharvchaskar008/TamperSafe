@@ -1,0 +1,17 @@
+# Hardhat build artifacts (also covered by the repo root .gitignore; kept
+# here too so `contracts/` is self-contained if run standalone)
+/artifacts
+/cache
+/dist
+/types
+/typechain-types
+
+# Hardhat coverage / gas snapshots
+/coverage
+/.gas-snapshot
+/snapshots
+
+# Env files (never commit; contracts/.env.example is tracked instead)
+.env
+.env.*
+!.env.example
