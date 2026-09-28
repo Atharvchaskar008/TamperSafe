@@ -9,6 +9,7 @@ import type { CommandQueue } from "./commandQueue.js";
 import type { SseHub } from "./sse.js";
 import type { StoredEvent } from "./ingest/types.js";
 import { getOrder as chainGetOrder } from "./chain/typedCalls.js";
+import { ethers } from "ethers";
 
 const ALERT_RATE_LIMIT_MS = 60_000;
 const ANCHOR_EVERY_MS = 30_000;
@@ -128,11 +129,14 @@ export class RulesEngine {
       return;
     }
     try {
-      await this.writer.sealShipment(orderId, boxId, pending.courierAddress!, event.head);
+      // ChainWriter expects the on-chain bytes32 box id, not the string
+      // label the device protocol (and CommandQueue) speaks.
+      await this.writer.sealShipment(orderId, ethers.id(boxId), pending.courierAddress!, event.head);
       await this.maybeAnchor(orderId, event.seq, event.head, true);
-    } catch {
+    } catch (err) {
       // Permanent revert: the seal never landed, but the box is still
       // physically sealed -- same recovery path as the check above.
+      console.error(`[rules] sealShipment(${orderId}) failed:`, err);
       this.commands.queueUnlock(boxId, orderId, { exemptFromTerminalCancel: true });
       this.sse.emit("alert", { boxId, orderId, type: "SEAL_ABORT", message: "sealShipment reverted; queuing UNLOCK to recover the box" });
     }

@@ -29,6 +29,15 @@ interface WriterJob {
 
 const MAX_RETRIES = 2;
 
+/** Our own protocol module always produces bare lowercase hex (no "0x"),
+ * but ethers v6 requires a "0x"-prefixed BytesLike for a `bytes32` ABI slot
+ * -- confirmed empirically (a bare-hex boxId/head threw INVALID_ARGUMENT
+ * "invalid BytesLike value" during the M3 build). Idempotent if already
+ * prefixed, so it's safe to apply to a value that might be either. */
+function toBytes32(hex: string): string {
+  return hex.startsWith("0x") ? hex : `0x${hex}`;
+}
+
 export interface TxEvent {
   stage: "submitted" | "confirmed" | "failed";
   label: string;
@@ -78,13 +87,23 @@ export class ChainWriter {
   }
 
   /** Exactly the five ORACLE functions. No other contract call is reachable
-   * through this class. */
+   * through this class.
+   *
+   * `boxId` must already be the on-chain bytes32 box id (e.g. `ethers.id(label)`)
+   * -- this class does not know the box's string label. Every hash-shaped
+   * argument (`baselineHash`, `evidenceHash`, `logHead`, `head`) is expected
+   * as the bare lowercase hex our own protocol module produces (no "0x"
+   * prefix); toBytes32() below adds it, because ethers v6 rejects a
+   * BytesLike value that isn't already "0x"-prefixed. */
   sealShipment(orderId: number, boxId: string, courier: string, baselineHash: string): Promise<ethers.TransactionReceipt> {
-    return this.enqueue("sealShipment", [orderId, boxId, courier, baselineHash], { holdKey: `order:${orderId}`, label: `sealShipment(${orderId})` });
+    return this.enqueue("sealShipment", [orderId, toBytes32(boxId), courier, toBytes32(baselineHash)], {
+      holdKey: `order:${orderId}`,
+      label: `sealShipment(${orderId})`,
+    });
   }
 
   reportTamper(orderId: number, code: number, evidenceHash: string): Promise<ethers.TransactionReceipt> {
-    return this.enqueue("reportTamper", [orderId, code, evidenceHash], {
+    return this.enqueue("reportTamper", [orderId, code, toBytes32(evidenceHash)], {
       priority: true,
       holdKey: `order:${orderId}`,
       label: `reportTamper(${orderId}, code=${code})`,
@@ -92,18 +111,21 @@ export class ChainWriter {
   }
 
   confirmDelivery(orderId: number, logHead: string, lat: number, lon: number, gpsFix: boolean): Promise<ethers.TransactionReceipt> {
-    return this.enqueue("confirmDelivery", [orderId, logHead, lat, lon, gpsFix], {
+    return this.enqueue("confirmDelivery", [orderId, toBytes32(logHead), lat, lon, gpsFix], {
       holdKey: `order:${orderId}`,
       label: `confirmDelivery(${orderId})`,
     });
   }
 
   anchor(orderId: number, seq: number, head: string, count: number): Promise<ethers.TransactionReceipt> {
-    return this.enqueue("anchor", [orderId, seq, head, count], { holdKey: `anchor:${orderId}`, label: `anchor(${orderId}, seq=${seq})` });
+    return this.enqueue("anchor", [orderId, seq, toBytes32(head), count], { holdKey: `anchor:${orderId}`, label: `anchor(${orderId}, seq=${seq})` });
   }
 
   logAlert(orderId: number, code: number, evidenceHash: string): Promise<ethers.TransactionReceipt> {
-    return this.enqueue("logAlert", [orderId, code, evidenceHash], { holdKey: `alert:${orderId}:${code}`, label: `logAlert(${orderId}, code=${code})` });
+    return this.enqueue("logAlert", [orderId, code, toBytes32(evidenceHash)], {
+      holdKey: `alert:${orderId}:${code}`,
+      label: `logAlert(${orderId}, code=${code})`,
+    });
   }
 
   /** Drops any queued (not yet in-flight) anchor job for an order, keeping
