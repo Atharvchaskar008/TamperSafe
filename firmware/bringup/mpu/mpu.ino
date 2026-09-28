@@ -67,6 +67,7 @@ void loop() {
   float ayg = ay / ACCEL_LSB_PER_G;
   float azg = az / ACCEL_LSB_PER_G;
 
-  Serial.printf("ax=%.3fg ay=%.3fg az=%.3fg |a|=%.3fg\n", axg, ayg, azg, sqrtf(axg * axg + ayg * ayg + azg * azg));
+  Serial.printf("raw ax=%d ay=%d az=%d  |  ax=%.3fg ay=%.3fg az=%.3fg |a|=%.3fg\n",
+                ax, ay, az, axg, ayg, azg, sqrtf(axg * axg + ayg * ayg + azg * azg));
   delay(200); // ~5 Hz, plenty for eyeballing on Serial
 }
