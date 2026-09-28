@@ -14,7 +14,7 @@ Board facts and wiring rules live in `CLAUDE.md` and the `neurick-firmware` skil
 | Latch servo | SG90 / MG90S | ☐ | Neurick servo port | Needs the 12 V battery switched on |
 | Box | Cardboard or acrylic, hinged lid, side compartment for board + battery | ☐ | — | Window so the OLED is visible |
 | Passives | 1 kΩ + 2 kΩ resistors (ECHO divider), jumpers, foam padding | ☐ | — | — |
-| Neurick P1 header map | from the Neurick manual | ☐ | — | Needed to fill the header column in §2 |
+| Neurick P1 header map | from the Neurick manual | ☐ (library source `docs/neurick/Newrick.h`/`.cpp` received 2026-09-28; confirms the STM32 I2C command protocol and `servo(s1,s2,s4)` — no S3. Still no physical P1 header pinout) | — | Needed to fill the header column in §2 |
 | RFID reader | MFRC522 (13.56 MHz, SPI) + at least one tag/card per demo package | ☐ | 3.3 V | SPI, not I2C — needs its own SCK/MOSI/MISO/SDA(SS)/RST pins, separate from the shared I2C bus |
 | Optional | LDR + 10 kΩ, microSD card | ☐ | 3.3 V | Stretch only |
 
@@ -31,7 +31,7 @@ The GPIOs below are **proposed**. They avoid the unavailable pins, the strapping
 | Ultrasonic trigger | TRIG | 12 | TBD | 5 V | Direct |
 | Ultrasonic echo | ECHO | 13 | TBD | 5 V | **1k/2k divider** → 3.3 V |
 | IR lid sensor | OUT | 14 | TBD | 3.3 V | Direct |
-| Latch servo | signal | STM32 servo **S1** | servo port | 12 V battery | `nr.servo(lockAngle, S2_REST, S3_REST)`. All three servos are set on every call, so keep S2/S3 constants |
+| Latch servo | signal | STM32 servo **S1** | servo port | 12 V battery | `nr.servo(lockAngle, S2_REST, S4_REST)`. The real API is `servo(s1_angle, s2_angle, s4_angle)` — channels S1, S2, **S4** (no S3). All three are set together every call, so keep S2/S4 constants |
 | Motion | — | onboard MPU6050 `0x68` | — | — | Shared I2C bus |
 | Status | — | onboard OLED `0x3C` | — | — | Shared I2C bus |
 | Depot / demo button | — | STM32 `buttonState` | — | — | Long press in IDLE = local reset (demo) |

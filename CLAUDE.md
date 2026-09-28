@@ -6,6 +6,7 @@
 - **Gate lifted 28 Sept 2026.** The team said "start". Code, contracts, firmware and scaffolds may now be written, per `docs/IMPLEMENTATION_PLAN.md`.
 - M2 (hardware bring-up) and M4 (firmware main) are blocked until the team fills `HARDWARE.md` §1–2 (every pin is TBD) and copies the Neurick manual into `docs/neurick/`. Tracks A (contracts) and C (relayer/dashboard) proceed now.
 - **RFID added for the demo (28 Sept):** an MFRC522 reader binds the sealed package's identity via its tag UID. It is evidence-only (`Alert PACKAGE_MISMATCH`, code 16) and never gates an escrow transition — no contract or protocol change. See `docs/ARCHITECTURE.md` §6 and `docs/HARDWARE.md` §1/§2/§5.
+- **Neurick library source received (28 Sept), copied to `docs/neurick/`.** It's the STM32 command-protocol library (`Newrick.h`/`.cpp`), not a P1 header pinout manual — HARDWARE.md §1–2 (sensor pins) are still TBD. It did correct a real API mismatch: `servo()` takes channels **S1, S2, S4** (no S3) — CLAUDE.md and HARDWARE.md were wrong about S3 and are now fixed.
 
 ## Project: TamperSafe
 A tamper-evident delivery box with on-chain escrow. The buyer's payment sits in an MST testnet escrow from dispatch to doorstep.
@@ -75,7 +76,7 @@ The main session plans, reviews every diff against the invariants, and owns chan
 - Newrick library (`#include <Newrick.h>`, `Newrick nr;`):
   - `begin()`
   - `motor(id 1-4, speed -1000..1000)`: 0 stops. Commands persist until changed; always stop motors deliberately.
-  - `servo(a1, a2, a3)`: 0-180 each; all three are set together every call.
+  - `servo(s1_angle, s2_angle, s4_angle)`: 0-180 each; all three are set together every call. Note the real signature (confirmed from the organiser-provided `Newrick.h`/`.cpp`, now in `docs/neurick/`) names the channels S1, S2, **S4** — there is no S3 parameter.
   - `resetEncoders()`
   - `bool updateEncoders()`: fills `enc1..enc4`. Poll at 50 Hz max.
   - `bool updateSensors()`: fills `current1..4`, `batteryVolts`, `buttonState`. Poll at about 10 Hz.
