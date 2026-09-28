@@ -8,15 +8,15 @@ Board facts and wiring rules live in `CLAUDE.md` and the `neurick-firmware` skil
 
 | Item | Planned part | Actual model | Supply | Check |
 | :--- | :--- | :--- | :--- | :--- |
-| Ultrasonic | HC-SR04 | ☐ | 5 V | A 3.3 V variant (HC-SR04P / RCWL-1601) needs no ECHO divider |
-| IR lid sensor | FC-51 or TCRT5000 reflective module, digital OUT | ☐ | 3.3 V preferred | At 5 V, OUT needs a divider |
-| GPS | u-blox NEO-6M (GY-NEO6MV2) + patch antenna | ☐ | 3.3–5 V | Measure that TX idles ≤ 3.3 V |
-| Latch servo | SG90 / MG90S | ☐ | Neurick servo port | Needs the 12 V battery switched on |
+| Ultrasonic | HC-SR04 | **HC-SR04** (`sensors.xlsx` #5, confirmed 5 V variant) | 5 V | ECHO needs the 1k/2k divider (not the 3.3 V HC-SR04P variant) |
+| IR lid sensor | FC-51 or TCRT5000 reflective module, digital OUT | **Generic IR obstacle-avoidance module** (`sensors.xlsx` #6, "Infrared Obstacle Detection 2-30cm") — same reflective digital-OUT-with-threshold-pot family as FC-51/TCRT5000, but confirm the exact board's supply voltage and OUT polarity (active-low vs active-high) physically before wiring | ☐ TBD — check | At 5 V, OUT needs a divider |
+| GPS | u-blox NEO-6M (GY-NEO6MV2) + patch antenna | **NEO-6M** (`sensors.xlsx` #17, exact match) | 3.3–5 V | Measure that TX idles ≤ 3.3 V |
+| Latch servo | SG90 / MG90S | ☐ **`sensors.xlsx` #8 is listed as "MG995 Metal Gear Servo... Tower Pro" but its own link is the MG996R product page (4.8–7.2 V, 500–900 mA, 180°, 3-wire PWM).** Confirm with the team which servo is physically in hand — MG995/MG996R is a much higher-torque/current part than the planned SG90/MG90S, still fine on the Neurick servo port but check the STM32's servo-driver current headroom | Neurick servo port | Needs the 12 V battery switched on |
 | Box | Cardboard or acrylic, hinged lid, side compartment for board + battery | ☐ | — | Window so the OLED is visible |
 | Passives | 1 kΩ + 2 kΩ resistors (ECHO divider), jumpers, foam padding | ☐ | — | — |
 | Neurick P1 header map | from the Neurick manual | ☐ (library source `docs/neurick/Newrick.h`/`.cpp` received 2026-09-28; confirms the STM32 I2C command protocol and `servo(s1,s2,s4)` — no S3. Still no physical P1 header pinout) | — | Needed to fill the header column in §2 |
-| RFID reader | MFRC522 (13.56 MHz, SPI) + at least one tag/card per demo package | ☐ | 3.3 V | SPI, not I2C — needs its own SCK/MOSI/MISO/SDA(SS)/RST pins, separate from the shared I2C bus |
-| Optional | LDR + 10 kΩ, microSD card | ☐ | 3.3 V | Stretch only |
+| RFID reader | MFRC522 (13.56 MHz, SPI) + at least one tag/card per demo package | **RC522 (MFRC522 chip)** (`sensors.xlsx` #10, exact match) | 3.3 V | SPI, not I2C — needs its own SCK/MOSI/MISO/SDA(SS)/RST pins, separate from the shared I2C bus |
+| Optional | LDR + 10 kΩ, microSD card | **LDR** (`sensors.xlsx` #18) and **8 GB Sandisk microSD** (`sensors.xlsx` #1) both confirmed in hand | 3.3 V | Stretch only |
 
 ---
 
