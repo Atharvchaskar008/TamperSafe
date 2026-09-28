@@ -24,7 +24,10 @@ TBD — filled in at M6 (MST testnet deploy), with explorer links.
 
 ## Open-source libraries
 
-TBD — see `docs/HARDWARE.md` §6 for firmware libraries; npm packages are listed here as `relayer/` and `dashboard/` land.
+- **Contracts:** Hardhat 3, `@nomicfoundation/hardhat-toolbox-mocha-ethers`, OpenZeppelin Contracts v5.
+- **Relayer:** `tsx`, TypeScript, `@types/node`, Node's built-in `crypto` and `node:test`.
+- **Firmware:** `Newrick` (board library, provided by the organisers), Adafruit SSD1306 + Adafruit GFX, ESP32 core (WiFi, HTTPClient, Preferences/NVS, mbedtls). See `docs/HARDWARE.md` §6 for the full sensor-library list as those land.
+- Dashboard libraries will be listed here as `dashboard/` lands (planned: React, Vite, ethers v6, react-leaflet + OpenStreetMap tiles).
 
 ## Known limitations and production path
 

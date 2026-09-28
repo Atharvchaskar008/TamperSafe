@@ -71,9 +71,9 @@
 
 ## M1 — Contracts (Track A, 3 h)
 
-- [ ] Create a Hardhat 3 project in `contracts/` per the `mst-contract-deploy` skill, with OpenZeppelin v5. **commit**
-- [ ] `BoxRegistry` + tests: register, duplicate, bind/unbind, BINDER-only, inactive box. **commit**
-- [ ] `TamperSafeEscrow` without the bond, plus tests. **commit** Tests cover:
+- [x] Create a Hardhat 3 project in `contracts/` per the `mst-contract-deploy` skill, with OpenZeppelin v5. **commit**
+- [x] `BoxRegistry` + tests: register, duplicate, bind/unbind, BINDER-only, inactive box. **commit**
+- [x] `TamperSafeEscrow` without the bond, plus tests. **commit** Tests cover:
   - The happy path.
   - Cancel.
   - Tamper from InTransit **and** from UnlockRequested.
@@ -82,17 +82,19 @@
   - Terminal states frozen.
   - A box double-bind.
   - Balance deltas asserted on every payout.
-- [ ] Courier bond (`depositBond`, `withdrawBond`, lock on seal, unlock on delivery, slash to seller on tamper or timeout) + tests. **commit** ← cut-line 2
-- [ ] `TelemetryAnchor` + tests: seq must increase, ORACLE-only. **commit**
-- [ ] `scripts/deploy.ts`. Run it on `npx hardhat node`. **commit** It must:
+- [x] Courier bond (`depositBond`, `withdrawBond`, lock on seal, unlock on delivery, slash to seller on tamper or timeout) + tests. **commit** ← cut-line 2
+- [x] `TelemetryAnchor` + tests: seq must increase, ORACLE-only. **commit**
+- [x] `scripts/deploy.ts`. Run it on `npx hardhat node`. **commit** It must:
   - Deploy all three contracts.
   - Grant `BINDER_ROLE` to the escrow and `ORACLE_ROLE` (escrow + anchor) to the relayer address.
   - Register `TS-BOX-01`.
   - Write `deployments/<chain>.json` (addresses + deploy tx hashes) and `deployments/abi/*.json`.
 
 **Done when:**
-- `npx hardhat test` is green, covering every case above.
-- The local deploy writes `deployments/local.json`.
+- [x] `npx hardhat test` is green, covering every case above. (68 tests, independently reran)
+- [x] The local deploy writes `deployments/local.json`.
+
+**M1 status: done, reviewed against the CLAUDE.md invariants, pushed.**
 
 ---
 
@@ -108,7 +110,7 @@
 
 ## M3 — Relayer core + sim-box (Track C, 3 h)
 
-- [ ] Protocol module **first**: canonical form, SHA-256 chain and HMAC per `ARCHITECTURE.md` §9.1, plus `relayer/test/vectors.json` and its unit test. **commit** (Firmware M4 depends on this file.)
+- [x] Protocol module **first**: canonical form, SHA-256 chain and HMAC per `ARCHITECTURE.md` §9.1, plus `relayer/test/vectors.json` and its unit test. **commit** (Firmware M4 depends on this file.) — done, independently cross-checked with `openssl`, firmware's `vectors.h` matches byte-for-byte.
 - [ ] `relayer/` skeleton. **commit** It includes:
   - Config via `.env`.
   - A chain client switched by `CHAIN=local|mst`.
@@ -130,15 +132,20 @@
 
 ## M4 — Firmware main (Track B, 5 h)
 
-- [ ] Skeleton. **commit** It includes:
+- [x] Skeleton. **commit** It includes:
   - The `setup()` order from the skill.
   - The box-state enum (§6).
   - The non-blocking scheduler (§8 cadence).
   - The state shown on the OLED and on Serial.
-- [ ] Hash chain + HMAC. The boot self-test reproduces `relayer/test/vectors.json` and prints `SELFTEST PASS`. **commit**
-- [ ] Network task on core 0 (ARCHITECTURE §8): Wi-Fi reconnect, NTP, batch POST (timeout ≤ 3 s), the mutex-guarded 128-event ring buffer, and the SEAL / UNLOCK / RESET commands with `cmd_id` acks. **commit**
-- [ ] Sensor tasks, tamper rules and alerts, using the `HARDWARE.md` §5 values. **commit**
-- [ ] NVS persistence (latch before report) and `POWER_INTERRUPTED` on boot. **commit**
+- [x] Hash chain + HMAC. The boot self-test reproduces `relayer/test/vectors.json` and prints `SELFTEST PASS`. **commit** — compiles clean against real vectors; PASS/FAIL itself must still be observed on real Serial output by the team.
+- [x] Network task on core 0 (ARCHITECTURE §8): Wi-Fi reconnect, NTP, batch POST (timeout ≤ 3 s), the mutex-guarded 128-event ring buffer, and the SEAL / UNLOCK / RESET commands with `cmd_id` acks. **commit**
+- [~] Sensor tasks, tamper rules and alerts, using the `HARDWARE.md` §5 values. **commit** — MPU6050 SHOCK/TILT done; ultrasonic/IR/GPS/RFID stubbed behind `PINS_CONFIRMED=0` since HARDWARE.md §1–2 are still TBD.
+- [x] NVS persistence (latch before report) and `POWER_INTERRUPTED` on boot. **commit** — verified by direct code review: every transition writes NVS state before its event reaches the network task.
+
+**M4 status: skeleton/NVS/network/MPU done and compiles clean (arduino-cli, exit 0). Not reachable this pass — needs the team:**
+- The 4 scenarios below need a real box and confirmed pins (`HARDWARE.md` §1–2).
+- Install `docs/neurick/Newrick.{h,cpp}` into the Arduino IDE's libraries folder.
+- Run `firmware/bringup/servo_angles` and calibrate LOCK/UNLOCK before ever flashing the main sketch onto a mounted latch.
 
 **Done when**, against the relayer on the local chain:
 1. Seal → walk 60 s → buyer Confirm & Unlock → **Delivered**.
