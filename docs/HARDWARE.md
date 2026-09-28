@@ -15,6 +15,7 @@ Board facts and wiring rules live in `CLAUDE.md` and the `neurick-firmware` skil
 | Box | Cardboard or acrylic, hinged lid, side compartment for board + battery | ☐ | — | Window so the OLED is visible |
 | Passives | 1 kΩ + 2 kΩ resistors (ECHO divider), jumpers, foam padding | ☐ | — | — |
 | Neurick P1 header map | from the Neurick manual | ☐ | — | Needed to fill the header column in §2 |
+| RFID reader | MFRC522 (13.56 MHz, SPI) + at least one tag/card per demo package | ☐ | 3.3 V | SPI, not I2C — needs its own SCK/MOSI/MISO/SDA(SS)/RST pins, separate from the shared I2C bus |
 | Optional | LDR + 10 kΩ, microSD card | ☐ | 3.3 V | Stretch only |
 
 ---
@@ -35,8 +36,11 @@ The GPIOs below are **proposed**. They avoid the unavailable pins, the strapping
 | Status | — | onboard OLED `0x3C` | — | — | Shared I2C bus |
 | Depot / demo button | — | STM32 `buttonState` | — | — | Long press in IDLE = local reset (demo) |
 | Stretch: LDR | AO | 4 (ADC1) | TBD | 3.3 V divider | — |
+| RFID SCK / MOSI / MISO | MFRC522 SPI | TBD | TBD | 3.3 V | Direct. Confirm against the manual which P1 pins carry the ESP32-S3's SPI bus |
+| RFID SDA (SS/CS) | MFRC522 | TBD | TBD | 3.3 V | Direct, any free GPIO |
+| RFID RST | MFRC522 | TBD | TBD | 3.3 V | Direct, any free GPIO |
 
-GPIO 12–18 are ADC2. They work as digital pins with Wi-Fi on, and only the stretch LDR is analog, so it takes the ADC1 pin.
+GPIO 12–18 are ADC2. They work as digital pins with Wi-Fi on, and only the stretch LDR is analog, so it takes the ADC1 pin. The RFID reader is SPI, so it needs its own dedicated pins in addition to the shared I2C bus (SDA=8, SCL=9) — do not reuse those two.
 
 ---
 
@@ -89,6 +93,7 @@ GPIO 12–18 are ADC2. They work as digital pins with Wi-Fi on, and only the str
 | Shock | 20 Hz | `abs(accel) > 2.5 g`, at most 1 per 10 s | ALERT `SHOCK` (10) |
 | Tilt | 20 Hz | Tilt > 60° for 3 s | ALERT `TILT` (11) |
 | GPS | every loop | Valid when TinyGPS location is valid and its age < 5 s | Evidence only |
+| RFID tag | 1 Hz | Read tag UID at seal (baseline). While SEALED, tag UID absent or changed for 3 consecutive reads (3 s) | ALERT `PACKAGE_MISMATCH` (16) — evidence only, never TAMPER |
 | Battery | 2 Hz | `batteryVolts` < 10.5 V → refuse SEAL, show `LOW BATT` | — |
 | Servo | — | LOCK angle = ☐, UNLOCK angle = ☐ | — |
 
@@ -97,7 +102,7 @@ GPIO 12–18 are ADC2. They work as digital pins with Wi-Fi on, and only the str
 ## 6. Libraries (list them in the README)
 
 - **Board and display:** `Newrick` (board library), Adafruit SSD1306 + Adafruit GFX.
-- **Sensors and data:** TinyGPSPlus, ArduinoJson v7.
+- **Sensors and data:** TinyGPSPlus, ArduinoJson v7, MFRC522 (e.g. `miguelbalboa/rfid`) for the RFID reader.
 - **ESP32 core:** WiFi, HTTPClient, Preferences (NVS), mbedtls (SHA-256, HMAC).
 - **MPU6050:** read the raw registers over the shared bus, or use a library that accepts the existing `Wire` instance. Either way, re-run the I2C scan afterwards to confirm `0x3C` and `0x68` still answer.
 
@@ -110,4 +115,5 @@ GPIO 12–18 are ADC2. They work as digital pins with Wi-Fi on, and only the str
 3. The servo reaches LOCK and UNLOCK. With the latch locked, the lid cannot be lifted.
 4. Seal the box, then walk it around the room for 60 s: **zero** tamper events.
 5. Lift the lid 1 cm: `LID_OPENED` within 300 ms. Remove the package: `CONTENTS_DISTURBED` within 1.5 s.
-6. Write the calibrated thresholds and angles back into §5 and commit.
+6. Present the demo package's RFID tag, seal, then pull the tag away: `PACKAGE_MISMATCH` alert within 3 s, and confirm the order stays InTransit (no tamper, no escrow transition).
+7. Write the calibrated thresholds and angles back into §5 and commit.

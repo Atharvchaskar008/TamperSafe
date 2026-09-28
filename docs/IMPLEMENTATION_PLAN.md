@@ -49,6 +49,7 @@
 - [ ] Hardware inventory:
   - Fill `HARDWARE.md` §1.
   - Confirm the P1 header pins for GPIO 12, 13, 14, 17 and 18, and fill §2.
+  - Confirm the P1 header pins for the RFID reader's SPI bus (SCK/MOSI/MISO/SDA/RST), and fill §2.
   - Confirm where the ultrasonic points.
   - Confirm the 12 V pack powers the ESP32 with USB unplugged. The box runs untethered, and the power-cut scenario depends on it.
 - [ ] Wallets (team only): five MetaMask accounts, each funded from the faucet: **admin/deployer, relayer ORACLE, buyer, seller, courier**.
@@ -98,7 +99,7 @@
 ## M2 — Hardware bring-up (Track B, 3 h)
 
 - [ ] Wire per `HARDWARE.md` §2 with the dividers. Battery ON.
-- [ ] Bring-up sketches in `firmware/bringup/`: `i2c_scan`, `ultrasonic`, `ir_lid`, `gps`, `servo_angles`, `mpu`. **commit** each one as it works.
+- [ ] Bring-up sketches in `firmware/bringup/`: `i2c_scan`, `ultrasonic`, `ir_lid`, `gps`, `servo_angles`, `mpu`, `rfid`. **commit** each one as it works.
 - [ ] Mount the sensors per §4. Calibrate the thresholds and servo angles, and write the values into §5. **commit**
 
 **Done when:** every item of the `HARDWARE.md` §7 checklist passes.

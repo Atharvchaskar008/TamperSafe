@@ -211,6 +211,7 @@ Events: `Anchored(orderId, seq, head, count)`, `Alert(orderId, code, evidenceHas
 | 13 | `LOG_GAP` | relayer: sequence gap |
 | 14 | `ROUTE_DEVIATION` | relayer (stretch S1) |
 | 15 | `SENSOR_FAULT` | box: ultrasonic invalid reads |
+| 16 | `PACKAGE_MISMATCH` | RFID reader: sealed package's tag UID absent or changed while SEALED |
 
 **Box states**: `BOOT · IDLE · ARMING · SEALED · TAMPERED · OPEN_AUTHORIZED`
 
@@ -255,7 +256,7 @@ stateDiagram-v2
 - **NVS keys:** `state`, `order_id`, `seq`, `head`, `baseline_mm`, `tamper_code`, `boot_count`.
   - Write `state` immediately on every transition.
   - Write `seq` and `head` on every event generated.
-- **Alerts** (SHOCK, TILT, SENSOR_FAULT) never change state.
+- **Alerts** (SHOCK, TILT, SENSOR_FAULT, PACKAGE_MISMATCH) never change state. `PACKAGE_MISMATCH` is identity evidence, not a tamper signal — it does not gate `reportTamper` or any escrow transition.
 - **Thresholds and sampling rates** are in `docs/HARDWARE.md` §5.
 
 **Two tasks, so the network never blinds the sensors.** An HTTP POST can block for up to 3 s, and a lid lifted and re-closed inside a stalled POST must still latch. The work is split across the two cores:

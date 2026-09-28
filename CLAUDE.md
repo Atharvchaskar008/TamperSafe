@@ -5,6 +5,7 @@
 - Hacking window: 28 Sept 2026, 15:30 IST → 29 Sept, 15:30 IST (confirm the end time with the organisers).
 - **Gate lifted 28 Sept 2026.** The team said "start". Code, contracts, firmware and scaffolds may now be written, per `docs/IMPLEMENTATION_PLAN.md`.
 - M2 (hardware bring-up) and M4 (firmware main) are blocked until the team fills `HARDWARE.md` §1–2 (every pin is TBD) and copies the Neurick manual into `docs/neurick/`. Tracks A (contracts) and C (relayer/dashboard) proceed now.
+- **RFID added for the demo (28 Sept):** an MFRC522 reader binds the sealed package's identity via its tag UID. It is evidence-only (`Alert PACKAGE_MISMATCH`, code 16) and never gates an escrow transition — no contract or protocol change. See `docs/ARCHITECTURE.md` §6 and `docs/HARDWARE.md` §1/§2/§5.
 
 ## Project: TamperSafe
 A tamper-evident delivery box with on-chain escrow. The buyer's payment sits in an MST testnet escrow from dispatch to doorstep.
