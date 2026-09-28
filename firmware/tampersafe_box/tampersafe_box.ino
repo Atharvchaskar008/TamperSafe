@@ -253,21 +253,37 @@ static void reportStatus() {
                 ctx.battValid ? String(nr.batteryVolts, 2).c_str() : "?",
                 wifiOk ? "OK" : "--", ctx.lock, g_selfTestOk ? "PASS" : "FAIL");
 
+  // 128x32 at text size 1 = 21 chars/row, 4 rows (y=0/8/16/24). Wrap is
+  // disabled deliberately: a wrapped line 3 ("TAMPERED: POWER_INTERRUPTED"
+  // is 27 chars) would overlap line 4 instead of being clipped -- clipped
+  // but readable beats overlapping and unreadable on the one screen the
+  // power-cut demo depends on.
   display.clearDisplay();
+  display.setTextWrap(false);
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
+
   display.setCursor(0, 0);
-  display.println(BOX_ID);
-  display.setCursor(0, 10);
+  display.printf("%s %s", BOX_ID, g_selfTestOk ? "ST:OK" : "ST:FAIL");
+
+  display.setCursor(0, 8);
   if (ctx.state == BoxState::TAMPERED) {
-    display.print("TAMPERED: ");
-    display.println(tamperCodeName(ctx.tamperCode));
+    display.print("TAMPERED:");
   } else {
-    display.println(boxStateName(ctx.state));
+    display.print(boxStateName(ctx.state));
   }
-  display.setCursor(0, 20);
-  display.printf("B:%s W:%s L:%c %s", ctx.battValid ? String(nr.batteryVolts, 1).c_str() : "?",
-                 wifiOk ? "Y" : "N", ctx.lock, g_selfTestOk ? "ST:OK" : "ST:FAIL");
+
+  display.setCursor(0, 16);
+  if (ctx.state == BoxState::TAMPERED) {
+    display.print(tamperCodeName(ctx.tamperCode)); // longest name is 18 chars, fits
+  } else {
+    display.printf("order=%lu", (unsigned long)ctx.orderId);
+  }
+
+  display.setCursor(0, 24);
+  display.printf("B:%s W:%s L:%c", ctx.battValid ? String(nr.batteryVolts, 1).c_str() : "?",
+                 wifiOk ? "Y" : "N", ctx.lock);
+
   display.display();
 }
 
@@ -417,6 +433,21 @@ void loop() {
         attemptSeal(cmdOrderId, cmdId);
         handled = true;
       } else if (strcmp(cmdType, "UNLOCK") == 0 && ctx.state == BoxState::SEALED && cmdOrderId == ctx.orderId) {
+        doUnlock(cmdId);
+        handled = true;
+      } else if (strcmp(cmdType, "UNLOCK") == 0 && ctx.state == BoxState::IDLE && ctx.orderId != 0 &&
+                 cmdOrderId == ctx.orderId) {
+        // Idempotent, mirroring the RESET-in-IDLE case below: a brownout
+        // during doUnlock() itself (HARDWARE.md §3's "brownout when the
+        // servo moves" risk) can reboot the box between moving the servo
+        // and the UNLOCKED event ever leaving RAM. The reboot's boot-time
+        // mapping turns OPEN_AUTHORIZED into IDLE but keeps order_id, so
+        // this re-runs doUnlock() (harmless: same servo angle, a fresh
+        // UNLOCKED event) rather than leaving the relayer's UNLOCK stuck
+        // forever and the happy path unable to reach Delivered. Safe
+        // because a SEALED box can't boot into IDLE (only TAMPERED
+        // survives a reboot as itself), and ARMING never reached SEALED,
+        // so no UNLOCK can exist for an order that was never InTransit.
         doUnlock(cmdId);
         handled = true;
       } else if (strcmp(cmdType, "RESET") == 0 &&

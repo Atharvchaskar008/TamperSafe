@@ -218,7 +218,10 @@ static void runPostCycle() {
       // One-off, right after the first real POST (worst-case stack usage
       // for this task, since it exercises HTTPClient + JSON together) --
       // lets the team confirm there's real headroom on actual hardware.
-      Serial.printf("netTask stack high-water mark: %u words free\n",
+      // Unit is BYTES on ESP-IDF's FreeRTOS (not words, as in the vanilla
+      // FreeRTOS docs for this same call) -- see freertos/task.h's own
+      // comment on uxTaskGetStackHighWaterMark2.
+      Serial.printf("netTask stack high-water mark: %u bytes free\n",
                     (unsigned)uxTaskGetStackHighWaterMark(nullptr));
       loggedStackHighWaterMark = true;
     }
