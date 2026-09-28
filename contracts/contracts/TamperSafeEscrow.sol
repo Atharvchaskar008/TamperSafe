@@ -34,9 +34,9 @@ contract TamperSafeEscrow is AccessControl, ReentrancyGuard {
         Cancelled
     }
 
-    /// @dev Not in ARCHITECTURE.md §5.2's Events list, but is a state
-    /// change the escrow drives, so it gets an event per the project's
-    /// "one event per state change" rule.
+    /// @dev ARCHITECTURE.md §5.2 names `FundsReleased.kind` as "one of
+    /// PAYMENT | REFUND | BOND_SLASH" but never gives its type or order;
+    /// flagged for review. This ordering (0/1/2) is what the ABI encodes.
     enum ReleaseKind {
         PAYMENT,
         REFUND,
@@ -94,6 +94,9 @@ contract TamperSafeEscrow is AccessControl, ReentrancyGuard {
     event TamperDetected(uint256 indexed id, bytes32 indexed boxId, uint8 code, bytes32 evidenceHash);
     event OrderExpired(uint256 indexed id);
     event FundsReleased(uint256 indexed id, address indexed to, uint256 amount, ReleaseKind kind);
+    /// @dev Not in ARCHITECTURE.md §5.2's Events list at all, but setting
+    /// bondBps is a state change the escrow drives, so it gets an event per
+    /// the project's "one event per state change" rule; flagged for review.
     event BondBpsSet(uint16 bps);
 
     error InvalidStatus(uint256 id, Status current);
@@ -268,7 +271,12 @@ contract TamperSafeEscrow is AccessControl, ReentrancyGuard {
         }
         if (block.timestamp <= o.deadline) revert DeadlineNotReached();
 
-        bool wasSealed = o.courier != address(0);
+        // `status` (captured above, before this write) is Funded only when
+        // the order was never sealed -- checking that instead of
+        // `courier != address(0)` also covers the degenerate case of a
+        // seal naming the zero address as courier, which would otherwise
+        // leave the box permanently bound.
+        bool wasSealed = status != Status.Funded;
         o.status = Status.Expired;
         uint256 amount = o.amount;
         address buyer = o.buyer;

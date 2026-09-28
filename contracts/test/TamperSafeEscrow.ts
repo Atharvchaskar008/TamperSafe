@@ -361,7 +361,7 @@ describe("TamperSafeEscrow", function () {
     it("from UnlockRequested: refunds the buyer, slashes the bond, frees the box", async function () {
       const { escrow, oracle, buyer, seller, courier } = await networkHelpers.loadFixture(deployAll);
       const { id, amount } = await createOrder(escrow, buyer, seller);
-      await sealWithBond(escrow, oracle, courier, id, amount);
+      const { bond } = await sealWithBond(escrow, oracle, courier, id, amount);
       await escrow.connect(buyer).requestUnlock(id);
 
       await expect(escrow.connect(oracle).reportTamper(id, 2, EVIDENCE_HASH))
@@ -370,6 +370,19 @@ describe("TamperSafeEscrow", function () {
 
       expect((await escrow.getOrder(id)).status).to.equal(Status.Tampered);
       expect(await escrow.lockedBond(courier.address)).to.equal(0n);
+    });
+
+    it("asserts the buyer/seller/courier balance deltas on tamper from UnlockRequested", async function () {
+      const { escrow, oracle, buyer, seller, courier } = await networkHelpers.loadFixture(deployAll);
+      const { id, amount } = await createOrder(escrow, buyer, seller);
+      const { bond } = await sealWithBond(escrow, oracle, courier, id, amount);
+      await escrow.connect(buyer).requestUnlock(id);
+
+      await expect(escrow.connect(oracle).reportTamper(id, 2, EVIDENCE_HASH)).to.changeEtherBalances(
+        ethers,
+        [buyer, seller, courier],
+        [amount, bond, 0n],
+      );
     });
 
     it("asserts the buyer/seller/courier balance deltas on tamper", async function () {
@@ -449,6 +462,20 @@ describe("TamperSafeEscrow", function () {
       expect((await registry.getBox(BOX_ID)).activeOrderId).to.equal(0n);
       expect((await escrow.getOrder(id)).status).to.equal(Status.Expired);
       expect(await escrow.lockedBond(courier.address)).to.equal(0n);
+    });
+
+    it("asserts the buyer/seller/courier balance deltas on timeout from UnlockRequested", async function () {
+      const { escrow, oracle, buyer, seller, courier } = await networkHelpers.loadFixture(deployAll);
+      const { id, amount, deadline } = await createOrder(escrow, buyer, seller);
+      const { bond } = await sealWithBond(escrow, oracle, courier, id, amount);
+      await escrow.connect(buyer).requestUnlock(id);
+      await networkHelpers.time.increaseTo(deadline + 1n);
+
+      await expect(escrow.connect(buyer).claimTimeout(id)).to.changeEtherBalances(
+        ethers,
+        [buyer, seller, courier],
+        [amount, bond, 0n],
+      );
     });
 
     it("asserts the buyer/seller/courier balance deltas on timeout (sealed order)", async function () {

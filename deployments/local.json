@@ -1,6 +1,6 @@
 {
   "chainId": "31337",
-  "deployedAt": "2026-09-28T14:17:56.185Z",
+  "deployedAt": "2026-09-28T14:23:28.332Z",
   "deployer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
   "relayerOracle": {
     "address": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
@@ -13,11 +13,11 @@
     },
     "TamperSafeEscrow": {
       "address": "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512",
-      "deployTxHash": "0xcb78094db4ed9e2c0e676699b9b39765448ac5457f535d0dfbb7426b233194ec"
+      "deployTxHash": "0xf823143217a0f2367c6f2c6278a6c39365ce225ca68de87d5c5280611406069d"
     },
     "TelemetryAnchor": {
       "address": "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0",
-      "deployTxHash": "0xb8778bff1b077b9c96f0dcf842b2e1c731d21fabc73ab81caebf2c2def662dfb"
+      "deployTxHash": "0x135a16c66d8b5c7edf0ab5565e056cde21e2551638d33e583517b3d8ee2633dd"
     }
   },
   "boxes": [
