@@ -399,5 +399,5 @@ A single page with one tab per role.
 | Buyer | My orders, status, where the money went | Create order, cancel, **Confirm & Unlock** (buyer wallet) |
 | Courier | Free and locked bond | Deposit / withdraw bond (courier wallet) |
 | Depot | Funded orders, boxes and their states | Seal order into box, reset box (relayer REST) |
-| Track | Map with GPS trail and a `LIVE / NO_FIX / SIMULATED` badge. Live tiles: lid, distance vs baseline, shock, lock, battery, box state | — |
+| Track | Map (`react-leaflet` with OpenStreetMap tiles, no API key) with GPS trail and a `LIVE / NO_FIX / SIMULATED` badge. Live tiles: lid, distance vs baseline, shock, lock, battery, box state | — |
 | Evidence | Per-order timeline of box events and on-chain txs, each with an explorer link | **Verify log**: recompute the chain with WebCrypto up to `Anchor.latest(order).seq` and compare with the anchored head at that seq. Events after it show as "pending anchor" |

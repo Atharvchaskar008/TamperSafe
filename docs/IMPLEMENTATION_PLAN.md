@@ -156,7 +156,7 @@
   - A contract read layer fed from `deployments/`.
 - [ ] Buyer tab: create order, cancel, **Confirm & Unlock**. **commit**
 - [ ] Depot tab (seal, reset) and Courier tab (bond). **commit**
-- [ ] Track tab: map + sensor tiles + `LIVE / NO_FIX / SIMULATED` badge. **commit** ← the map is cut-line 4
+- [ ] Track tab: map (`react-leaflet`, OpenStreetMap tiles, no API key) + sensor tiles + `LIVE / NO_FIX / SIMULATED` badge. **commit** ← the map is cut-line 4
 - [ ] Evidence tab: timeline, explorer links, **Verify log**. **commit**
 
 **Done when:** the happy path is clicked through end to end with sim-box on the local chain, and every transaction row links to an explorer.
