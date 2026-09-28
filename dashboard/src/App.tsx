@@ -3,8 +3,9 @@ import { DEFAULT_NETWORK, NETWORKS, type NetworkKey } from "./config/networks";
 import { useWallet } from "./hooks/useWallet";
 import { WalletBar } from "./components/WalletBar";
 import { BuyerTab } from "./components/BuyerTab";
+import { CourierTab } from "./components/CourierTab";
 
-type TabKey = "buyer";
+type TabKey = "buyer" | "courier";
 
 export function App() {
   const wallet = useWallet();
@@ -23,10 +24,16 @@ export function App() {
         <button type="button" className={tab === "buyer" ? "active" : ""} onClick={() => setTab("buyer")}>
           Buyer
         </button>
-        <span className="tabs-note">Courier · Depot · Track · Evidence — pending next commits</span>
+        <button type="button" className={tab === "courier" ? "active" : ""} onClick={() => setTab("courier")}>
+          Courier
+        </button>
+        <span className="tabs-note">Depot · Track · Evidence — pending relayer routes (M5 remainder)</span>
       </nav>
 
-      <main>{tab === "buyer" && <BuyerTab network={network} wallet={wallet} />}</main>
+      <main>
+        {tab === "buyer" && <BuyerTab network={network} wallet={wallet} />}
+        {tab === "courier" && <CourierTab network={network} wallet={wallet} />}
+      </main>
     </div>
   );
 }
