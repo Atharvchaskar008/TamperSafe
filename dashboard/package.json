@@ -1,0 +1,25 @@
+{
+  "name": "tampersafe-dashboard",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "TamperSafe dashboard: Buyer/Courier tabs (M5 first two items) signing txs via MetaMask against deployments/*.json.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "ethers": "^6.13.5",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7"
+  }
+}

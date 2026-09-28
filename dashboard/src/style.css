@@ -1,0 +1,121 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: #0f1115;
+  color: #e7e9ee;
+}
+
+.app {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  border-bottom: 1px solid #2a2d36;
+  padding-bottom: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.wallet-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.wallet-mismatch,
+.wallet-error,
+.form-error {
+  color: #ff6b6b;
+}
+
+.tabs {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.tabs button {
+  padding: 0.4rem 0.9rem;
+}
+
+.tabs button.active {
+  background: #4b7bec;
+  color: white;
+}
+
+.tabs-note {
+  font-size: 0.8rem;
+  color: #8a8f9c;
+  margin-left: auto;
+}
+
+section {
+  margin-bottom: 1.5rem;
+}
+
+form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-width: 420px;
+}
+
+form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.85rem;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+th,
+td {
+  border-bottom: 1px solid #2a2d36;
+  padding: 0.4rem;
+  text-align: left;
+}
+
+.tx-list {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.tx-entry {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  font-size: 0.85rem;
+  padding: 0.3rem 0.5rem;
+  border-radius: 4px;
+  background: #1a1d24;
+}
+
+.tx-pending {
+  border-left: 3px solid #f6b93b;
+}
+
+.tx-confirmed {
+  border-left: 3px solid #2ecc71;
+}
+
+.tx-failed {
+  border-left: 3px solid #ff6b6b;
+}
