@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Secrets (never commit; .example files are tracked instead)
+.env
+firmware/tampersafe_box/secrets.h
+
+# Contracts build output
+contracts/artifacts/
+contracts/cache/
+contracts/typechain-types/
+
+# Relayer runtime data (device event logs, JSONL store)
+relayer/data/
+
+# Dashboard build output
+dashboard/dist/
+
+# Editor / OS
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
